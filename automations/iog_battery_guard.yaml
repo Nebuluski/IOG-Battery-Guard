@@ -1,0 +1,103 @@
+# =============================================================================
+# IOG Battery-Guard — pause GivEnergy discharge during Octopus IOG dispatch
+# =============================================================================
+# WHAT IT DOES
+#   While Octopus "Intelligent Octopus Go" is running a cheap dispatch slot
+#   (guaranteed 23:30–05:30 window *and* daytime smart dispatches), it tells the
+#   GivEnergy battery to STOP discharging — so the cheap grid import powers the
+#   Tesla + house instead of draining your stored energy. When the dispatch
+#   ends, it puts the battery back to normal.
+#
+#   Belt-and-braces: it also re-checks on Home Assistant startup (covers a
+#   reboot mid-dispatch), every 15 minutes (safety net), and refuses to act if
+#   the Octopus sensor drops out (unavailable/unknown).
+#
+#   Your overnight timed-charge schedule is NOT touched — this only ever moves
+#   the "battery pause" lever.
+#
+# -----------------------------------------------------------------------------
+# ⚠️  BEFORE THIS WILL WORK: replace the TWO placeholder entity IDs below.
+#     See docs/setup-guide.md → "Step 5: find your two entity IDs".
+#
+#   1) OCTOPUS DISPATCH SENSOR  (looks like the line below, with YOUR account no.)
+#        binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
+#
+#   2) GIVTCP BATTERY-PAUSE SELECT  (the exact name depends on your inverter
+#      serial; find it in Developer Tools → States, filter "pause")
+#        select.givtcp_SERIAL_battery_pause_mode
+#
+#   ALSO confirm the exact option words (3) for that select — open it in
+#   Developer Tools → States and read its "options" attribute. Common values
+#   are "Pause Discharge" to stop discharge and "Not Paused" to resume. If yours
+#   differ (e.g. "Disabled"), edit the two `option:` lines to match EXACTLY.
+# -----------------------------------------------------------------------------
+
+- alias: "IOG Battery-Guard – pause discharge during Octopus dispatch"
+  id: iog_battery_guard
+  description: >-
+    Pause GivEnergy battery discharge while Octopus Intelligent Go is
+    dispatching cheap power; resume normal Eco when it ends.
+  mode: single
+  max_exceeded: silent
+
+  # ---- WHEN to re-evaluate -------------------------------------------------
+  triggers:
+    # Dispatch turns on
+    - trigger: state
+      entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
+      to: "on"
+    # Dispatch turns off
+    - trigger: state
+      entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
+      to: "off"
+    # Re-sync after a Home Assistant restart (covers a reboot mid-dispatch)
+    - trigger: homeassistant
+      event: start
+    # Safety net: re-check four times an hour so state can never get stuck
+    - trigger: time_pattern
+      minutes: "/15"
+
+  # ---- GUARD: never act on a sensor dropout --------------------------------
+  conditions:
+    - condition: not
+      conditions:
+        - condition: state
+          entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
+          state:
+            - "unavailable"
+            - "unknown"
+
+  # ---- WHAT to do ----------------------------------------------------------
+  actions:
+    - choose:
+        # Dispatch ACTIVE  → pause discharge (only if not already paused)
+        - conditions:
+            - condition: state
+              entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
+              state: "on"
+            - condition: not
+              conditions:
+                - condition: state
+                  entity_id: select.givtcp_SERIAL_battery_pause_mode
+                  state: "Pause Discharge"
+          sequence:
+            - action: select.select_option
+              target:
+                entity_id: select.givtcp_SERIAL_battery_pause_mode
+              data:
+                option: "Pause Discharge"
+
+        # Dispatch INACTIVE  → resume normal (only if currently paused)
+        - conditions:
+            - condition: state
+              entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
+              state: "off"
+            - condition: state
+              entity_id: select.givtcp_SERIAL_battery_pause_mode
+              state: "Pause Discharge"
+          sequence:
+            - action: select.select_option
+              target:
+                entity_id: select.givtcp_SERIAL_battery_pause_mode
+              data:
+                option: "Not Paused"

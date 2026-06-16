@@ -1,7 +1,8 @@
 # IOG-Battery-Guard
 
-<!-- One-line description â€” edit me. This title and description are yours;
-     Evergreen only manages the marked region below. -->
+Home Assistant automation that pauses GivEnergy battery discharge while Octopus
+Intelligent Go is dispatching cheap power, then restores normal Eco when it ends.
+See **[docs/setup-guide.md](docs/setup-guide.md)** for the full newbie walkthrough.
 
 <!-- EVERGREEN:START core:setup -->
 ## Workflow
