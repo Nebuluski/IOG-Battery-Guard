@@ -1,0 +1,36 @@
+# Leakguard — workspace gitleaks rules (Evergreen core asset).
+#
+# gitleaks auto-discovers a `.gitleaks.toml` at the repo root, so every project
+# scaffolded or synced by Evergreen gets these rules for free — used by the
+# pre-commit gitleaks hook, the standalone pre-commit git hook, and CI. It
+# EXTENDS gitleaks' 700+ built-in rules and adds the workspace-specific ones.
+title = "Leakguard workspace rules"
+
+[extend]
+# Keep every built-in rule; we only ADD to them.
+useDefault = true
+
+# --- Vikunja API token -------------------------------------------------------
+# Vikunja personal API tokens are "tk_" followed by a long lowercase-hex string.
+[[rules]]
+id = "vikunja-api-token"
+description = "Vikunja API token (tk_…)"
+regex = '''tk_[0-9a-f]{40,64}'''
+keywords = ["tk_"]
+
+# --- Secret config files must never be staged --------------------------------
+# Defense in depth behind .gitignore: block these by PATH even if force-added.
+[[rules]]
+id = "workspace-secret-file"
+description = "Secret config file must never be committed"
+path = '''(^|/)(vikunja\.config\.json|\.env)$'''
+
+[allowlist]
+description = "Workspace-wide false-positive suppressions"
+paths = [
+  '''(^|/)vikunja\.config\.example\.json$''',
+  '''(^|/)\.env\.example$''',
+]
+regexes = [
+  '''tk_your_token_here''',
+]

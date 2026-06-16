@@ -1,0 +1,32 @@
+# Quality gate that runs BEFORE each commit so bad code never lands.
+# One-time setup per repo:  pip install pre-commit && pre-commit install
+# Keep versions fresh with:  pre-commit autoupdate
+repos:
+  # Leakguard: block secrets (tokens, keys, the Vikunja tk_… token) from ever
+  # being committed. Uses the repo's .gitleaks.toml for workspace-specific rules.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff          # lint (auto-fixes what it can)
+        args: [--fix]
+      - id: ruff-format   # format
+
+  # Lua checks use your locally installed tools (luacheck, stylua).
+  - repo: local
+    hooks:
+      - id: luacheck
+        name: luacheck
+        entry: luacheck
+        language: system
+        types: [lua]
+        require_serial: true
+      - id: stylua
+        name: stylua --check
+        entry: stylua --check
+        language: system
+        types: [lua]

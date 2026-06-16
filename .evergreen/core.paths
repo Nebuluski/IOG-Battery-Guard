@@ -1,0 +1,9 @@
+.editorconfig
+.github/pull_request_template.md
+.github/workflows/ci.yml
+.gitignore
+.gitleaks.toml
+.pre-commit-config.yaml
+CLAUDE.md
+README.md
+pyproject.toml

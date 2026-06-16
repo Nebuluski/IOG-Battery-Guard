@@ -1,0 +1,42 @@
+# Your own project-specific ignores can go ABOVE or BELOW the Evergreen block —
+# only the lines between the EVERGREEN markers are managed/refreshed by sync.
+
+# EVERGREEN:START core:ignore
+# --- Secrets / local config (NEVER commit; repos are public) ---
+vikunja.config.json
+.env
+*.token
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Lua ---
+*.luac
+luac.out
+.luarocks/
+lua_modules/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+# EVERGREEN:END core:ignore
+
+# EVERGREEN:START homelab:ignore
+# --- Homelab / Home Assistant runtime state & secrets (NEVER commit) ---
+secrets.yaml
+known_devices.yaml
+*.db
+*.db-*
+*.log
+.storage/
+.cloud/
+backups/
+# EVERGREEN:END homelab:ignore

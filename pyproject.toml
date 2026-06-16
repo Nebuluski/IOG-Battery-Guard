@@ -1,0 +1,10 @@
+# Project tooling config.
+# - pytest: put the repo root on sys.path so `from src.x import ...` works.
+# - ruff:   lint + format settings (kept lenient).
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
