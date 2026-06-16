@@ -8,7 +8,8 @@
 ## Workflow — follow this every task
 1. Start from a Vikunja card; note its task ID (e.g. `#42`).
 2. Branch as `task-<id>-<short-desc>` (e.g. `task-42-config-loader`).
-   The `post-checkout` hook moves the card to **In Progress**.
+   The `post-checkout` hook moves the card to **In Progress** and attaches this
+   repo's docs (README/CLAUDE.md/CONTRIBUTING/`docs\`) to the card.
 3. Make small, focused commits using Conventional Commits, and **always**
    include the task ref: `feat: add config loader (#42)`.
    The `commit-msg` hook hard-rejects any commit without `#<id>`; the
