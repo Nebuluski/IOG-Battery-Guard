@@ -9,7 +9,7 @@ until GivTCP is reinstalled and you've found your two entity IDs.
 
 **Your setup (for reference):**
 - Home Assistant: Supervised (you have the **Settings → Add-ons** store) — good.
-- Battery: GivEnergy **Gen 1 hybrid 5 kW**, inverter IP **`10.0.30.104`**.
+- Battery: GivEnergy **Gen 1 hybrid 5 kW**, inverter IP **`10.0.30.10`**.
 - Battery normally: **Eco mode**, with a **timed charge 23:30–05:30**.
 - Octopus Energy integration: already installed and working — we leave it alone.
 
@@ -56,7 +56,7 @@ charge. That's the "normal" we return to. Nothing to change here — just confir
    reopen the store and find GivTCP.)
 3. Click **Install** and wait for it to finish.
 4. Open the add-on's **Configuration** tab and set:
-   - **Inverter IP / `INVERTER_IP`** → `10.0.30.104`
+   - **Inverter IP / `INVERTER_IP`** → `10.0.30.10`
    - **Number of inverters** → `1`
    - Leave **MQTT** on its default (the add-on's built-in broker is fine to
      start); make sure **HA discovery** / `HADISCOVERY` is **enabled** so the
@@ -65,7 +65,7 @@ charge. That's the "normal" we return to. Nothing to change here — just confir
      / *self_run_loop*) — this is what creates the *writable* control entities
      we need, not just read-only sensors.
 5. **Info** tab → turn on **Start on boot** and **Watchdog** → click **Start**.
-6. **Log** tab → confirm it connects to `10.0.30.104` with no repeating errors.
+6. **Log** tab → confirm it connects to `10.0.30.10` with no repeating errors.
 
 ### Step 5 — Find your TWO entity IDs (the important bit)
 HA → **Developer Tools → States** (left sidebar; if hidden, enable *Advanced
