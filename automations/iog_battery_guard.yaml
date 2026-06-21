@@ -1,80 +1,96 @@
 # =============================================================================
-# IOG Battery-Guard — pause GivEnergy discharge during Octopus IOG dispatch
+# IOG Battery-Guard — pause GivEnergy discharge during IOG dispatch OR Zappi charging
 # =============================================================================
 # WHAT IT DOES
-#   While Octopus "Intelligent Octopus Go" is running a cheap dispatch slot
-#   (guaranteed 23:30–05:30 window *and* daytime smart dispatches), it tells the
-#   GivEnergy battery to STOP discharging — so the cheap grid import powers the
-#   Tesla + house instead of draining your stored energy. When the dispatch
-#   ends, it puts the battery back to normal.
+#   It tells the GivEnergy battery to STOP discharging whenever EITHER:
+#     (1) Octopus "Intelligent Octopus Go" is running a cheap dispatch slot
+#         (the guaranteed 23:30–05:30 window *and* daytime smart bumps), OR
+#     (2) the myenergi Zappi is actively charging the car (drawing power).
+#   …so cheap grid import powers the car + house instead of draining the battery.
+#   When BOTH are clear again, it puts the battery back to normal (Not Paused).
 #
-#   Belt-and-braces: it also re-checks on Home Assistant startup (covers a
-#   reboot mid-dispatch), every 15 minutes (safety net), and refuses to act if
-#   the Octopus sensor drops out (unavailable/unknown).
+#   Belt-and-braces: re-checks on Home Assistant startup (covers a reboot
+#   mid-charge) and every 15 minutes (safety net). It is FAIL-SAFE on sensor
+#   dropouts: if a sensor goes unavailable it will NOT resume discharge (it
+#   stays paused) and will NOT falsely pause — see the conditions below.
 #
 #   Your overnight timed-charge schedule is NOT touched — this only ever moves
-#   the "battery pause" lever.
+#   the "battery pause" lever (pausing *discharge* never stops *charging*).
+#
+#   NOTE on "Both": this pauses for ANY Zappi charging, including a manual Boost
+#   at peak rate (not only IOG-scheduled charges). If you ever want "IOG-only",
+#   delete the two Zappi lines and you're back to dispatch-only behaviour.
 #
 # -----------------------------------------------------------------------------
-# ⚠️  BEFORE THIS WILL WORK: replace the TWO placeholder entity IDs below.
-#     See docs/setup-guide.md → "Step 5: find your two entity IDs".
+# ⚠️  BEFORE THIS WILL WORK: replace the THREE placeholder entity IDs below, and
+#     confirm the Zappi power UNITS + the pause option words.
+#     See docs/setup-guide.md → "Step 5: find your entity IDs".
 #
-#   1) OCTOPUS DISPATCH SENSOR  (looks like the line below, with YOUR account no.)
+#   1) OCTOPUS DISPATCH SENSOR  (your account no., not 12345678)
 #        binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
 #
-#   2) GIVTCP BATTERY-PAUSE SELECT  (the exact name depends on your inverter
-#      serial; find it in Developer Tools → States, filter "pause")
-#        select.givtcp_SERIAL_battery_pause_mode
+#   2) ZAPPI CHARGE-RATE / POWER SENSOR  (Dev Tools → States, filter "zappi";
+#      pick the one that reads live charging power, e.g. *_charge_rate)
+#        sensor.zappi_SERIAL_charge_rate
+#      ▸▸ CHECK ITS UNITS. If it reads in WATTS (e.g. 7000), keep the threshold
+#         200 below. If it reads in KILOWATTS (e.g. 7.0), change BOTH `200`
+#         values to `0.2`. The threshold ignores tiny standby/diverter trickle.
 #
-#   ALSO confirm the exact option words (3) for that select — open it in
-#   Developer Tools → States and read its "options" attribute. Common values
-#   are "Pause Discharge" to stop discharge and "Not Paused" to resume. If yours
-#   differ (e.g. "Disabled"), edit the two `option:` lines to match EXACTLY.
+#   3) GIVTCP BATTERY-PAUSE SELECT  (Dev Tools → States, filter "pause")
+#        select.givtcp_SERIAL_battery_pause_mode
+#      Confirm its option words (Attributes → options) match the two `option:`
+#      lines exactly: commonly "Pause Discharge" (stop) and "Not Paused" (resume).
 # -----------------------------------------------------------------------------
 
-- alias: "IOG Battery-Guard – pause discharge during Octopus dispatch"
+- alias: "IOG Battery-Guard – pause discharge during IOG dispatch or Zappi charging"
   id: iog_battery_guard
   description: >-
-    Pause GivEnergy battery discharge while Octopus Intelligent Go is
-    dispatching cheap power; resume normal Eco when it ends.
+    Pause GivEnergy battery discharge while Octopus Intelligent Go is dispatching
+    cheap power OR the myenergi Zappi is charging the car; resume when both clear.
   mode: single
   max_exceeded: silent
 
   # ---- WHEN to re-evaluate -------------------------------------------------
   triggers:
-    # Dispatch turns on
+    # Octopus dispatch flips on/off
     - trigger: state
       entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
       to: "on"
-    # Dispatch turns off
     - trigger: state
       entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
       to: "off"
-    # Re-sync after a Home Assistant restart (covers a reboot mid-dispatch)
+    # Zappi starts drawing power (car charging begins) — debounced 10 s
+    - trigger: numeric_state
+      entity_id: sensor.zappi_SERIAL_charge_rate
+      above: 200          # ← if the sensor is in kW, change to 0.2
+      for: "00:00:10"
+    # Zappi stops drawing power (car charging ends) — debounced 10 s
+    - trigger: numeric_state
+      entity_id: sensor.zappi_SERIAL_charge_rate
+      below: 200          # ← if the sensor is in kW, change to 0.2
+      for: "00:00:10"
+    # Re-sync after a Home Assistant restart (covers a reboot mid-charge)
     - trigger: homeassistant
       event: start
     # Safety net: re-check four times an hour so state can never get stuck
     - trigger: time_pattern
       minutes: "/15"
 
-  # ---- GUARD: never act on a sensor dropout --------------------------------
-  conditions:
-    - condition: not
-      conditions:
-        - condition: state
-          entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
-          state:
-            - "unavailable"
-            - "unknown"
-
   # ---- WHAT to do ----------------------------------------------------------
   actions:
     - choose:
-        # Dispatch ACTIVE  → pause discharge (only if not already paused)
+        # SHOULD PAUSE — dispatch on OR Zappi charging — and not already paused.
+        # (If a sensor is unavailable it simply won't match here, so a dropout
+        #  can never *cause* a false pause.)
         - conditions:
-            - condition: state
-              entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
-              state: "on"
+            - condition: or
+              conditions:
+                - condition: state
+                  entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
+                  state: "on"
+                - condition: numeric_state
+                  entity_id: sensor.zappi_SERIAL_charge_rate
+                  above: 200      # ← match the units choice above
             - condition: not
               conditions:
                 - condition: state
@@ -87,11 +103,17 @@
               data:
                 option: "Pause Discharge"
 
-        # Dispatch INACTIVE  → resume normal (only if currently paused)
+        # SHOULD RESUME — dispatch genuinely "off" AND Zappi genuinely below the
+        # threshold AND currently paused. Because both checks require a *known*
+        # value, a sensor dropout (unavailable/unknown) makes this branch false,
+        # so the battery stays paused rather than wrongly resuming mid-charge.
         - conditions:
             - condition: state
               entity_id: binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
               state: "off"
+            - condition: numeric_state
+              entity_id: sensor.zappi_SERIAL_charge_rate
+              below: 200          # ← match the units choice above
             - condition: state
               entity_id: select.givtcp_SERIAL_battery_pause_mode
               state: "Pause Discharge"
