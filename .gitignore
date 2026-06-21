@@ -1,6 +1,9 @@
 # Your own project-specific ignores can go ABOVE or BELOW the Evergreen block —
 # only the lines between the EVERGREEN markers are managed/refreshed by sync.
 
+# Local handoff notes (contain home-network topology; keep out of the public repo)
+HANDOFF.md
+
 # EVERGREEN:START core:ignore
 # --- Secrets / local config (NEVER commit; repos are public) ---
 vikunja.config.json
