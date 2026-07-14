@@ -15,7 +15,7 @@
    The `commit-msg` hook hard-rejects any commit without `#<id>`; the
    `pre-commit` hook hard-rejects any commit that stages a secret (gitleaks).
 4. Push the branch and open a PR. The `pre-push` hook first runs the same
-   checks CI runs (ruff + pytest + Lua) and blocks a push that would fail.
+   checks CI runs (ruff + pytest + Lua + Node/TS) and blocks a push that would fail.
    CI (lint + tests on Windows & Ubuntu) must be green before merge.
 5. After the PR merges, `git pull` on `main` — the `post-merge` hook marks
    the card **Done**.
@@ -36,6 +36,16 @@
   `vikunja.config.json` and `.env` are gitignored. These repos are public.
 - Don't bypass hooks (`--no-verify`) unless explicitly told to.
 - `main` must stay releasable — nothing merges red.
+
+## Decision records (docs/decisions/)
+- Every significant design/architecture/product decision gets a numbered ADR
+  in `docs/decisions/` (copy `TEMPLATE.md`), committed with the work it
+  explains — this is the project's durable record of what was decided, when,
+  why, and what was rejected.
+- Design-review or grilling sessions that settle several decisions are
+  summarised into one ADR at the end of the session.
+- Changed your mind? New ADR that supersedes the old one — never rewrite
+  history.
 <!-- EVERGREEN:END core:conventions -->
 
 ## Project-specific notes

@@ -6,4 +6,6 @@
 .pre-commit-config.yaml
 CLAUDE.md
 README.md
+docs/decisions/README.md
+docs/decisions/TEMPLATE.md
 pyproject.toml

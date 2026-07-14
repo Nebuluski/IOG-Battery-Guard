@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
 
+# Least-privilege read access for GITHUB_TOKEN. gitleaks-action needs
+# pull-requests:read to list a PR's commits; without this the job 403s on
+# repos whose default workflow token is restricted.
+permissions:
+  contents: read
+  pull-requests: read
+
 jobs:
   # ---- Python: lint + format check + tests on both OSes ----
   python:
@@ -41,18 +48,75 @@ jobs:
             echo "has_lua=false" >> "$GITHUB_OUTPUT"
             echo "No .lua files — skipping Lua checks."
           fi
+      # DCS mission Lua targets the 5.1 sandbox — lint on the SAME runtime so
+      # luacheck's std=lua51 guard reflects what DCS actually runs.
       - if: steps.detect.outputs.has_lua == 'true'
-        run: sudo apt-get update && sudo apt-get install -y lua5.4 luarocks
+        run: sudo apt-get update && sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks
       - if: steps.detect.outputs.has_lua == 'true'
         run: sudo luarocks install luacheck
       - if: steps.detect.outputs.has_lua == 'true'
-        run: luacheck . || true   # start lenient; remove "|| true" to enforce
+        run: luacheck .   # hard gate: a 5.1 violation fails the build
       - if: steps.detect.outputs.has_lua == 'true'
         uses: JohnnyMorganz/stylua-action@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           version: latest
           args: --check .
+      # Behavioural gate: run the real Busted suite on the same 5.1 runtime.
+      # A repo with a pure-Lua runner (e.g. spec/run.lua) can mirror this locally
+      # where Busted can't build; CI is the authoritative framework run. Busted
+      # reads .busted (auto-discovers spec/*_spec.lua) and passes if there are no
+      # specs yet, so this is safe for a freshly-scaffolded Lua project.
+      - if: steps.detect.outputs.has_lua == 'true'
+        run: sudo luarocks install busted
+      - if: steps.detect.outputs.has_lua == 'true'
+        name: Busted (offline suite on Lua 5.1)
+        run: busted
+
+  # ---- Node/TypeScript: install + lint + typecheck + tests (Ubuntu only) ----
+  # Only runs when the repo has a root package.json (e.g. an Expo/React Native
+  # app). Mirrored locally by preflight.py — keep the two in step.
+  node:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Detect Node project
+        id: detect
+        shell: bash
+        run: |
+          if [ -f package.json ]; then
+            echo "has_node=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_node=false" >> "$GITHUB_OUTPUT"
+            echo "No package.json — skipping Node checks."
+          fi
+          # Pin Node from .nvmrc when the repo has one; setup-node falls back
+          # to the runner default when the input is empty.
+          if [ -f .nvmrc ]; then
+            echo "node_version_file=.nvmrc" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.detect.outputs.has_node == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: ${{ steps.detect.outputs.node_version_file }}
+      - if: steps.detect.outputs.has_node == 'true'
+        name: Install dependencies
+        shell: bash
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+      - if: steps.detect.outputs.has_node == 'true'
+        run: npm run lint --if-present
+      - if: steps.detect.outputs.has_node == 'true'
+        name: TypeScript typecheck
+        shell: bash
+        run: |
+          if [ -f tsconfig.json ]; then
+            npx tsc --noEmit
+          else
+            echo "no tsconfig.json — skipping typecheck"
+          fi
+      - if: steps.detect.outputs.has_node == 'true'
+        run: npm run test --if-present
 
   # ---- Leakguard: re-scan for secrets in the cloud (can't be bypassed locally) ----
   gitleaks:
