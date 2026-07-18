@@ -16,7 +16,10 @@
    `pre-commit` hook hard-rejects any commit that stages a secret (gitleaks).
 4. Push the branch and open a PR. The `pre-push` hook first runs the same
    checks CI runs (ruff + pytest + Lua + Node/TS) and blocks a push that would fail.
-   CI (lint + tests on Windows & Ubuntu) must be green before merge.
+   CI (lint + tests on Ubuntu) must be green before merge. Windows tests run
+   locally via that pre-push hook, not in CI (to stay within the private-repo
+   Actions minute allowance); the full CI suite is PR-only, and a push to `main`
+   runs only the gitleaks secret rescan.
 5. After the PR merges, `git pull` on `main` — the `post-merge` hook marks
    the card **Done**.
 <!-- EVERGREEN:END core:workflow -->
