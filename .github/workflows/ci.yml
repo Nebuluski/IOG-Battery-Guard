@@ -4,6 +4,13 @@ on:
   push:
     branches: [main]
 
+# Cancel a superseded in-progress run on the SAME PR ref: pushing a fixup before
+# CI finishes cancels the now-stale run. Scoped to PRs only, so a push-to-main
+# run is never cancelled.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 # Least-privilege read access for GITHUB_TOKEN. gitleaks-action needs
 # pull-requests:read to list a PR's commits; without this the job 403s on
 # repos whose default workflow token is restricted.
@@ -11,14 +18,22 @@ permissions:
   contents: read
   pull-requests: read
 
+# --- Minutes policy (private repos have a 2000-min/mo Actions allowance) ------
+# The full suite runs on `pull_request` only. A merge to main is validated by
+# the PR that introduced it, so re-running everything on the push was pure
+# duplication — the push event now runs ONLY the gitleaks secret rescan (the one
+# server-side check worth keeping on the merge commit). Windows CI was dropped
+# entirely: it was the sole 2x-billed job, and preflight.py already runs the
+# identical ruff + pytest on Windows locally (pre-push hook) on every push, so
+# Windows coverage is retained off-cloud. Keep preflight.py <-> this file in
+# lockstep: skipping the local pre-push hook now removes ALL Windows coverage.
+
 jobs:
-  # ---- Python: lint + format check + tests on both OSes ----
+  # ---- Python: lint + format check + tests (Ubuntu; PR only) ----
   python:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -32,10 +47,12 @@ jobs:
         run: |
           pytest -q || [ $? -eq 5 ]   # exit code 5 = no tests collected
 
-  # ---- Lua: lint + format check (Ubuntu only, keeps it simple) ----
+  # ---- Lua: lint + format check (Ubuntu only, keeps it simple; PR only) ----
   # Only runs when the repo actually contains Lua files.
   lua:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Detect Lua files
@@ -73,11 +90,13 @@ jobs:
         name: Busted (offline suite on Lua 5.1)
         run: busted
 
-  # ---- Node/TypeScript: install + lint + typecheck + tests (Ubuntu only) ----
+  # ---- Node/TypeScript: install + lint + typecheck + tests (Ubuntu only; PR only) ----
   # Only runs when the repo has a root package.json (e.g. an Expo/React Native
   # app). Mirrored locally by preflight.py — keep the two in step.
   node:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - name: Detect Node project
@@ -119,8 +138,12 @@ jobs:
         run: npm run test --if-present
 
   # ---- Leakguard: re-scan for secrets in the cloud (can't be bypassed locally) ----
+  # Runs on PRs AND on push to main: the ONE server-side check kept on the merge
+  # commit, so a secret can never land on main un-scanned even though the rest of
+  # the suite is PR-only.
   gitleaks:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
@@ -134,6 +157,7 @@ jobs:
   commit-task-ref:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
