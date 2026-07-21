@@ -40,6 +40,18 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install ruff pytest
+      # A packaged repo (a real [project] table, e.g. src/ layout with runtime
+      # deps) is installed so pytest imports it with its dependencies present.
+      # The scaffold's tooling-only pyproject.toml has no [project] table, so
+      # plain repos skip this and keep their pythonpath-based test imports.
+      - name: Install project (when packaged)
+        shell: bash
+        run: |
+          if grep -q '^\[project\]' pyproject.toml 2>/dev/null; then
+            pip install -e .
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
       - run: ruff check .
       - run: ruff format --check .
       - name: pytest (tolerate "no tests yet")

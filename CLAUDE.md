@@ -39,6 +39,13 @@
   `vikunja.config.json` and `.env` are gitignored. These repos are public.
 - Don't bypass hooks (`--no-verify`) unless explicitly told to.
 - `main` must stay releasable — nothing merges red.
+- **Stay in your remit.** Before building any new capability, check this
+  repo's `## Remit` in README.md and the workspace project registry
+  ("Project registry — who owns what" in the workspace CLAUDE.md). If another
+  project owns that ground, don't build it here — file a card on the owning
+  project's Vikunja board
+  (`python "$env:VIKUNJA_DEVKIT\vikunja-admin.py" task create <pid> "<title>" --description "<what/why + requesting repo>"`)
+  and reference it. Never directly edit a sibling repo.
 
 ## Decision records (docs/decisions/)
 - Every significant design/architecture/product decision gets a numbered ADR
