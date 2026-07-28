@@ -15,10 +15,11 @@ See **[docs/setup-guide.md](docs/setup-guide.md)** for the full newbie walkthrou
 
 <!-- EVERGREEN:START core:setup -->
 ## Workflow
-1. Pick a card on the board and note its task id.
-2. `git switch -c task-<id>-<short-desc>` (card auto-moves to **Doing**).
-3. Commit with a task ref: `feat: the thing (#<id>)` (hooks block a missing
-   ref or a staged secret).
+1. Pick a card on the board and note its ref — either the `CODE-nn` shown on
+   the card or its global task id.
+2. `git switch -c task-<ref>-<short-desc>` (card auto-moves to **Doing**).
+3. Commit with a task ref: `feat: the thing (CODE-nn)` or `(#<id>)` (hooks
+   block a missing ref or a staged secret).
 4. Push (a pre-push hook runs CI's checks locally first), open a PR, let CI
    go green, merge.
 5. `git pull` on `main` (card auto-moves to **Done**).
