@@ -26,14 +26,22 @@
    Actions minute allowance); the full CI suite is PR-only, and a push to `main`
    runs only the gitleaks secret rescan.
 5. After the PR merges, `git pull` on `main` — the `post-merge` hook marks
-   the card **Done**.
+   the card **Done**, but only for a ref it is sure you meant to *finish*.
+   Write **`(refs CODE-nn)`** when a commit merely relates to a card that is
+   not finished yet — a multi-PR card, or the first half of a build. It still
+   satisfies `commit-msg` and CI, the card stays open, and the hook says so.
+   A bare `(CODE-nn)` / `(#417)` still closes it.
 <!-- EVERGREEN:END core:workflow -->
 
 <!-- EVERGREEN:START core:conventions -->
 ## Commit style (Conventional Commits)
 `type: summary (CODE-nn)` — or `(#task)` — where type ∈ feat, fix, docs,
-refactor, test, chore. `.vikunja-code` holds this repo's code so CI can check
-scoped refs too; `vikunja.config.json` is gitignored, so CI can never read it.
+refactor, test, chore. Put the ref in a bracket of its own: only a bracket
+holding nothing but refs is read as a reference, so `monitor #48` in the
+summary is prose and closes nothing. `type: summary (refs CODE-nn)` references
+a card **without** finishing it. `.vikunja-code` holds this repo's code so CI
+can check scoped refs too; `vikunja.config.json` is gitignored, so CI can
+never read it.
 
 ## Code conventions
 - **Python:** Ruff for lint + format, type hints, pytest. No bare `except`.
@@ -43,7 +51,11 @@ scoped refs too; `vikunja.config.json` is gitignored, so CI can never read it.
 
 ## Hard rules
 - **NEVER commit secrets.** The Vikunja token lives in `VIKUNJA_TOKEN`;
-  `vikunja.config.json` and `.env` are gitignored. These repos are public.
+  `vikunja.config.json` and `.env` are gitignored. Don't reason from whether
+  *this* repo is public — most are private, at least one is not, and a repo's
+  visibility can be flipped in two clicks long after the commit lands. The
+  config also carries LAN addresses and board ids, which don't belong in a
+  history either way.
 - Don't bypass hooks (`--no-verify`) unless explicitly told to.
 - `main` must stay releasable — nothing merges red.
 - **Stay in your remit.** Before building any new capability, check this

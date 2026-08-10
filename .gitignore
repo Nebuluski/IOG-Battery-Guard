@@ -5,7 +5,7 @@
 HANDOFF.md
 
 # EVERGREEN:START core:ignore
-# --- Secrets / local config (NEVER commit; repos are public) ---
+# --- Secrets / local config (NEVER commit — visibility is not the reason) ---
 vikunja.config.json
 .env
 *.token
