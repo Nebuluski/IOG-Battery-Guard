@@ -159,11 +159,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # full history so a secret in any commit is caught
-      - uses: gitleaks/gitleaks-action@v2
+          # Deep checkout so the action can resolve the pushed/PR commit range.
+          # NOTE: this does NOT make the job scan full history -- the action
+          # scans `<base>^..<head>` only. Measured 2026-08-11: a real run logged
+          # "1 commits scanned". Don't restate this as a full-history rescan.
+          fetch-depth: 0
+      # PINNED BY COMMIT SHA, not by the mutable `v2` tag: a tag can be moved to
+      # point at new code, and this workflow is copied into every repo, so one
+      # moved tag would change the secret gate everywhere at once. `# v2.3.9` is
+      # a comment for humans -- the SHA is what actually resolves.
+      #
+      # KNOWN FAILURE MODE (GEN-33): the action is free by ACCOUNT TYPE, not by
+      # repo visibility -- it proves the owner is a personal account by calling
+      # api.github.com/users/<owner>. When that call fails it falls CLOSED into
+      # "licence required" and the job fails with "missing gitleaks license",
+      # which names the wrong cause; the real reason is a ##[warning] one line
+      # above. It is transient: `gh run rerun <id> --failed` clears it, and it
+      # hit 1 of 13 identical PRs on 2026-08-10. A red here is not proof of a
+      # secret -- read the log before believing either way.
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # gitleaks-action is free for public repos; uses the repo's .gitleaks.toml.
+          # Uses the repo's own .gitleaks.toml (shipped by Evergreen core), which
+          # adds the Vikunja tk_… rule on top of gitleaks' built-ins.
 
   # ---- Hard gate GitHub CAN see: every PR commit must reference a task ----
   commit-task-ref:
