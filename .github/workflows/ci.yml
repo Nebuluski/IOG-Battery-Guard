@@ -11,12 +11,13 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Least-privilege read access for GITHUB_TOKEN. gitleaks-action needs
-# pull-requests:read to list a PR's commits; without this the job 403s on
-# repos whose default workflow token is restricted.
+# Least-privilege read access for GITHUB_TOKEN. `contents: read` is all any job
+# here needs: the gitleaks job runs the scanner binary directly and resolves its
+# scan range from the local git clone, so nothing here calls the GitHub API.
+# `pull-requests: read` was removed with the action that wanted it -- see the
+# gitleaks job below for why. Do not add a scope back without a job that needs it.
 permissions:
   contents: read
-  pull-requests: read
 
 # --- Minutes policy (private repos have a 2000-min/mo Actions allowance) ------
 # The full suite runs on `pull_request` only. A merge to main is validated by
@@ -27,6 +28,17 @@ permissions:
 # identical ruff + pytest on Windows locally (pre-push hook) on every push, so
 # Windows coverage is retained off-cloud. Keep preflight.py <-> this file in
 # lockstep: skipping the local pre-push hook now removes ALL Windows coverage.
+#
+# ONE SANCTIONED DIVERGENCE (workspace ADR 0008). A repo that registers a `slow`
+# pytest marker in pyproject.toml runs `pytest -q -m "not slow"` locally, because
+# a Windows run of a long shell-script suite can cost 30-50 minutes against under
+# a minute here. preflight.py prints a loud banner when it narrows. Two
+# consequences, both accepted deliberately:
+#   * `slow`-marked tests get NO Windows execution -- not locally, not in CI. Mark
+#     a test `slow` only when the thing it proves is platform-independent.
+#   * Everything NOT marked `slow` still runs on Windows at every push.
+# This job is unchanged and must stay unchanged: plain `pytest -q`, no marker
+# filter, every test. CI is the authority.
 
 jobs:
   # ---- Python: lint + format check + tests (Ubuntu; PR only) ----
@@ -54,6 +66,46 @@ jobs:
           fi
       - run: ruff check .
       - run: ruff format --check .
+      # A repo that ships deployable stacks under stacks/ has those compose
+      # documents linted by its own test suite, and such a lint judges the
+      # document `docker compose config` RESOLVES. A lint like that must
+      # hard-refuse when the tool is missing rather than fall back to reading the
+      # files as written -- so the tool has to be proven present BEFORE pytest.
+      # Without this step a runner that lost the compose plugin would turn the
+      # gate's proof into "0 passed, N skipped" and nobody would look.
+      #
+      # `docker compose config` parses and merges locally and never talks to a
+      # daemon, so this needs the compose PLUGIN and nothing else -- no Docker
+      # daemon, no LAN, no secrets. GitHub's ubuntu runners ship it, so the check
+      # costs a second and fails loudly the day they stop. Keep it BEFORE pytest:
+      # a red here names the real cause, where a red inside the suite would not.
+      #
+      # The stack lint rides IN pytest rather than in a CLI step of its own, and
+      # that is deliberate: preflight.py is the local mirror of this file, it is a
+      # shared kit tool that knows nothing about any one repo's CLI, and
+      # preflight/ci.yml drift is a bug. Both run `pytest -q`, so both run the
+      # lint -- CI against Docker's real resolver, the workstation against
+      # whatever stand-in the repo's conftest.py provides where Docker is absent.
+      - name: Detect deployable stacks
+        id: stacks
+        shell: bash
+        run: |
+          # Test each candidate path, never `ls glob1 glob2 ...`: an unmatched
+          # glob stays literal, ls then exits non-zero, and the check would say
+          # "no stacks" for a repo that HAS one. Fail-open like that is exactly
+          # the silent skip this step exists to prevent.
+          has_stacks=false
+          for f in stacks/*/compose.yaml stacks/*/compose.yml stacks/*/docker-compose.yaml stacks/*/docker-compose.yml; do
+            if [ -f "$f" ]; then has_stacks=true; break; fi
+          done
+          echo "has_stacks=$has_stacks" >> "$GITHUB_OUTPUT"
+          if [ "$has_stacks" = "false" ]; then
+            echo "No stacks/*/compose.yaml - skipping the compose-resolver check."
+          fi
+      - if: steps.stacks.outputs.has_stacks == 'true'
+        name: Require docker compose (the stack lint's resolver)
+        shell: bash
+        run: docker compose version
       - name: pytest (tolerate "no tests yet")
         shell: bash
         run: |
@@ -153,35 +205,117 @@ jobs:
   # Runs on PRs AND on push to main: the ONE server-side check kept on the merge
   # commit, so a secret can never land on main un-scanned even though the rest of
   # the suite is PR-only.
+  #
+  # NO GITHUB API CALL ANYWHERE IN THIS JOB, AND THAT IS THE POINT.
+  # It used to run gitleaks/gitleaks-action@ff98106e (v2.3.9), which resolved its
+  # scan range by calling `GET /repos/<owner>/<repo>/pulls/<n>/commits` and proved
+  # the owner was a personal account (its free-tier check) by calling
+  # `GET /users/<owner>`. Both are reads, both are avoidable, and both went 403
+  # "Resource not accessible by integration" against a private repo despite
+  # `permissions: pull-requests: read` -- the action then crashed BEFORE scanning
+  # anything. Measured on Homelab-Forge, 2026-08-17: PR#61 green, PR#62 red once
+  # then green on a re-run, PR#63 red FOUR times (two re-runs plus a fresh run
+  # after close/reopen). An earlier sighting of the same fault, on a different
+  # repo, is recorded as GEN-33.
+  #
+  # That is worse than no gate. A secret check that goes red for reasons unrelated
+  # to secrets teaches everyone to hit re-run until it goes green, which is exactly
+  # how a real leak gets waved through. So the range now comes from the local git
+  # clone, which `fetch-depth: 0` already guarantees is complete, and the scanner
+  # is the plain gitleaks binary. Nothing here can 403.
+  #
+  # Do NOT "simplify" this back to the action, and do NOT make any step here
+  # advisory (`continue-on-error`, `|| true`, `--exit-code 0`).
   gitleaks:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with:
-          # Deep checkout so the action can resolve the pushed/PR commit range.
-          # NOTE: this does NOT make the job scan full history -- the action
-          # scans `<base>^..<head>` only. Measured 2026-08-11: a real run logged
-          # "1 commits scanned". Don't restate this as a full-history rescan.
+          # Deep checkout so the range `<base>..<head>` can be resolved and walked
+          # locally. NOTE: this does NOT make the job scan full history -- the scan
+          # is limited to that range by `--log-opts`. Measured 2026-08-11 under the
+          # old action: a real run logged "1 commits scanned". Don't restate this
+          # as a full-history rescan.
           fetch-depth: 0
-      # PINNED BY COMMIT SHA, not by the mutable `v2` tag: a tag can be moved to
-      # point at new code, and this workflow is copied into every repo, so one
-      # moved tag would change the secret gate everywhere at once. `# v2.3.9` is
-      # a comment for humans -- the SHA is what actually resolves.
-      #
-      # KNOWN FAILURE MODE (GEN-33): the action is free by ACCOUNT TYPE, not by
-      # repo visibility -- it proves the owner is a personal account by calling
-      # api.github.com/users/<owner>. When that call fails it falls CLOSED into
-      # "licence required" and the job fails with "missing gitleaks license",
-      # which names the wrong cause; the real reason is a ##[warning] one line
-      # above. It is transient: `gh run rerun <id> --failed` clears it, and it
-      # hit 1 of 13 identical PRs on 2026-08-10. A red here is not proof of a
-      # secret -- read the log before believing either way.
-      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7  # v2.3.9
+      # PINNED to an exact version AND to that release's published SHA-256, not to
+      # a floating tag and not to `latest`: this workflow is copied into every
+      # repo, so an upstream retag would change the secret gate everywhere at once.
+      # The checksum is the real pin -- verify it, then trust the binary.
+      # Bump both lines together, never one alone.
+      - name: Install gitleaks (pinned + checksummed)
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Uses the repo's own .gitleaks.toml (shipped by Evergreen core), which
-          # adds the Vikunja tk_… rule on top of gitleaks' built-ins.
+          GITLEAKS_VERSION: "8.30.1"
+          GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          set -euo pipefail
+          asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL --retry 3 --retry-all-errors \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}" \
+            -o "/tmp/${asset}"
+          echo "${GITLEAKS_SHA256}  /tmp/${asset}" | sha256sum -c -
+          tar -xzf "/tmp/${asset}" -C /tmp gitleaks
+          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+      # Same scope as before, both events:
+      #   pull_request -> base.sha..head.sha (every commit the PR adds)
+      #   push to main -> event.before..sha  (the merge/squash commit)
+      # Both SHAs come from the event payload, which is already in the runner's
+      # environment -- no API call resolves them.
+      #
+      # The repo's own root .gitleaks.toml is picked up automatically (gitleaks
+      # config precedence: --config, $GITLEAKS_CONFIG, then <target>/.gitleaks.toml).
+      # That is the SAME file the local pre-commit gate and `leakguard.py scan`
+      # use, and the same one the old action auto-discovered, so CI and the
+      # workstation agree rule-for-rule: gitleaks' built-ins plus the workspace
+      # Vikunja `tk_…` rule and the secret-file path rule. Coverage is unchanged.
+      - name: Scan the pushed range for secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+            head="${{ github.event.pull_request.head.sha }}"
+          else
+            base="${{ github.event.before }}"
+            head="${{ github.sha }}"
+          fi
+          # A branch-creation push sends an all-zero `before`, and a force-push can
+          # name a commit that no longer exists. Neither yields a usable range, so
+          # fall back to the whole history of HEAD: degrade by scanning MORE, never
+          # less. A secret gate must never quietly narrow its own scope.
+          if [ -z "$base" ] || ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            echo "::notice::no usable base commit -- scanning full history of $head"
+            range="$head"
+          else
+            range="${base}..${head}"
+          fi
+          echo "scanning range: $range ($(git rev-list --count "$range") commits)"
+          # --redact so a finding is masked before it reaches the public log; the
+          # non-zero exit, not the log text, is what fails the build.
+          # --no-color is LOAD-BEARING, not cosmetic: gitleaks colours its level
+          # column even when stdout is a file or a pipe, so `ERR` arrives wrapped
+          # in escape codes and the fail-closed grep below silently never matches.
+          # Verified both ways on 8.30.1, 2026-08-17. Do not drop this flag.
+          rc=0
+          gitleaks git --redact --verbose --no-banner --no-color \
+            --log-opts="$range" . >/tmp/gitleaks.log 2>&1 || rc=$?
+          cat /tmp/gitleaks.log
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::gitleaks exited $rc -- secrets found, or the scan failed. Read the log above before assuming either."
+            exit 1
+          fi
+          # FAIL CLOSED on a scan that never ran. gitleaks >= 8.27 exits 0 after
+          # logging `ERR`/`FTL` and reporting "0 commits scanned" (regression seen
+          # on 8.30.1, 2026-08-11; 8.26 exited 1). Trusting the exit code alone
+          # would put a green tick over an unscanned range -- the one failure mode
+          # a secret scanner must not have. Same guard as leakguard.py's.
+          if grep -Eq '(^|[[:space:]])(ERR|FTL)([[:space:]]|$)' /tmp/gitleaks.log; then
+            echo "::error::gitleaks logged an ERROR -- the scan did NOT complete. Treating as FAILED, not clean."
+            exit 1
+          fi
+          echo "gitleaks: clean."
 
   # ---- Hard gate GitHub CAN see: every PR commit must reference a task ----
   commit-task-ref:
