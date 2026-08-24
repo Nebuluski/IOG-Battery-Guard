@@ -31,6 +31,13 @@
    not finished yet — a multi-PR card, or the first half of a build. It still
    satisfies `commit-msg` and CI, the card stays open, and the hook says so.
    A bare `(CODE-nn)` / `(#417)` still closes it.
+
+## Briefing subagents — keep the session cheap
+Give every subagent: one absolute snapshot path (outside any git worktree — a
+repo-relative path can't be shared across worktrees), the `.env` path instead
+of a credential-hunting task, a hard tool-call limit with "report what you
+have" if it's not enough, and a text-only report — no per-agent commit, PR, or
+findings doc. The main thread writes one combined PR at the end.
 <!-- EVERGREEN:END core:workflow -->
 
 <!-- EVERGREEN:START core:conventions -->
