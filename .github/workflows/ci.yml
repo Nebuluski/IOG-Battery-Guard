@@ -66,6 +66,20 @@ jobs:
           fi
       - run: ruff check .
       - run: ruff format --check .
+      # Marked doc facts vs docs/facts.json (card GEN-29). The script itself
+      # exits 0 with a note when the repo carries no facts file, so this is a
+      # no-op for every repo that has not adopted one -- no shell guard needed
+      # here. Keep this in lockstep with preflight.py's mirror of it.
+      #
+      # Path is resolved case-insensitively (GEN-54): a Windows checkout of a
+      # repo with a pre-existing capital `Scripts/` dir (DCS repos) writes
+      # this file into `Scripts/docfacts.py`, which the Ubuntu runner's
+      # case-sensitive filesystem cannot see at the literal `scripts/` path.
+      - name: docfacts (marked doc facts vs docs/facts.json)
+        run: |
+          f=scripts/docfacts.py
+          [ -f "$f" ] || f=Scripts/docfacts.py
+          python "$f"
       # A repo that ships deployable stacks under stacks/ has those compose
       # documents linted by its own test suite, and such a lint judges the
       # document `docker compose config` RESOLVES. A lint like that must
