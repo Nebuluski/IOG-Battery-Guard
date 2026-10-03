@@ -80,6 +80,58 @@ jobs:
           f=scripts/docfacts.py
           [ -f "$f" ] || f=Scripts/docfacts.py
           python "$f"
+      # Optional OpenTofu install (card GEN-56, core v22). A repo whose tests
+      # skip on `shutil.which("tofu") is None` never ran them on the runner
+      # (FORGE-268). The repo opts in with a tracked `.github/opentofu.pin`
+      # holding TOFU_VERSION= and TOFU_SHA256= lines. That file is PROJECT-OWNED:
+      # it is not a core-managed path and a sync never writes it. No file means
+      # a no-op. A file that is present but broken FAILS the job: a bad pin must
+      # never turn tofu tests into silent skips. The pin is repo content, so it
+      # is parsed with grep/cut and never sourced or eval'd.
+      # preflight.py has no mirror: it never installs tools. A missing tool is
+      # skipped locally and CI is the backstop.
+      - name: Detect OpenTofu pin
+        id: tofu
+        shell: bash
+        run: |
+          pin=.github/opentofu.pin
+          if [ ! -f "$pin" ]; then
+            echo "has_pin=false" >> "$GITHUB_OUTPUT"
+            echo "No $pin - skipping the OpenTofu install."
+            exit 0
+          fi
+          get() {
+            { grep -E "^[[:space:]]*$1=" "$pin" || true; } | tail -n 1 | cut -d= -f2- | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'
+          }
+          ver=$(get TOFU_VERSION)
+          sha=$(get TOFU_SHA256)
+          if ! printf '%s' "$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::$pin: TOFU_VERSION missing or not X.Y.Z"
+            exit 1
+          fi
+          if ! printf '%s' "$sha" | grep -Eq '^[0-9a-f]{64}$'; then
+            echo "::error::$pin: TOFU_SHA256 missing or not 64 lowercase hex chars"
+            exit 1
+          fi
+          {
+            echo "has_pin=true"
+            echo "version=$ver"
+            echo "sha256=$sha"
+          } >> "$GITHUB_OUTPUT"
+      - if: steps.tofu.outputs.has_pin == 'true'
+        name: Install OpenTofu (pinned + checksummed, so tofu-dependent tests run)
+        shell: bash
+        env:
+          TOFU_VERSION: ${{ steps.tofu.outputs.version }}
+          TOFU_SHA256: ${{ steps.tofu.outputs.sha256 }}
+        run: |
+          set -euo pipefail
+          asset="tofu_${TOFU_VERSION}_linux_amd64.tar.gz"
+          curl -sSfL --retry 3 --retry-all-errors "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/${asset}" -o "/tmp/${asset}"
+          echo "${TOFU_SHA256}  /tmp/${asset}" | sha256sum -c -
+          tar -xzf "/tmp/${asset}" -C /tmp tofu
+          sudo install -m 0755 /tmp/tofu /usr/local/bin/tofu
+          tofu version
       # A repo that ships deployable stacks under stacks/ has those compose
       # documents linted by its own test suite, and such a lint judges the
       # document `docker compose config` RESOLVES. A lint like that must
