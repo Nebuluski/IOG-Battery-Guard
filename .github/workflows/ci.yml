@@ -45,7 +45,10 @@ jobs:
   python:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 20, not 10 (core v23): Homelab-Services' full suite reached 9 min 57 s of
+    # pytest and the job was cancelled at the limit with no test failed (SVC-25).
+    # The limit exists to stop a hung job, not to cap a healthy suite.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
