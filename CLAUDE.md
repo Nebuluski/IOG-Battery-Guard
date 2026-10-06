@@ -6,82 +6,62 @@
 
 <!-- EVERGREEN:START core:workflow -->
 ## Workflow — follow this every task
-1. Start from a Vikunja card. It has **two** refs and both work everywhere:
-   the scoped `CODE-nn` printed on the card itself (e.g. `NETAUD-42`) and the
-   global task id (e.g. `#417`). Prefer the scoped one — it is what you can
-   read straight off the board, and it cannot name another board's card.
-2. Branch as `task-<ref>-<short-desc>` — `task-netaud-42-config-loader` or
-   `task-417-config-loader`. The `post-checkout` hook moves the card to
-   **In Progress** and attaches this repo's docs
-   (README/CLAUDE.md/CONTRIBUTING/`docs\`) to the card.
-3. Make small, focused commits using Conventional Commits, and **always**
-   include the task ref: `feat: add config loader (NETAUD-42)`.
-   The `commit-msg` hook hard-rejects a commit carrying neither form — the
-   scoped one only for *this* repo's own code, read from `vikunja.config.json`.
-   The `pre-commit` hook hard-rejects any commit that stages a secret (gitleaks).
-4. Push the branch and open a PR. The `pre-push` hook first runs the same
-   checks CI runs (ruff + pytest + Lua + Node/TS) and blocks a push that would fail.
-   CI (lint + tests on Ubuntu) must be green before merge. Windows tests run
-   locally via that pre-push hook, not in CI (to stay within the private-repo
-   Actions minute allowance); the full CI suite is PR-only, and a push to `main`
-   runs only the gitleaks secret rescan.
-5. After the PR merges, `git pull` on `main` — the `post-merge` hook marks
-   the card **Done**, but only for a ref it is sure you meant to *finish*.
-   Write **`(refs CODE-nn)`** when a commit merely relates to a card that is
-   not finished yet — a multi-PR card, or the first half of a build. It still
-   satisfies `commit-msg` and CI, the card stays open, and the hook says so.
-   A bare `(CODE-nn)` / `(#417)` still closes it.
+1. Start from a Vikunja card. Use the scoped ref on the card (`NETAUD-42`). The
+   global id (`#417`) also works.
+2. Branch as `task-<ref>-<short-desc>`: `task-netaud-42-config-loader`.
+   `post-checkout` moves the card to **Doing**.
+3. Make small commits in Conventional Commits form. **Always** include the task
+   ref: `feat: add config loader (NETAUD-42)`. `commit-msg` rejects a commit
+   with no ref. `pre-commit` rejects a staged secret.
+4. Push and open a PR. `pre-push` runs the CI checks locally first. CI must be
+   green before the merge.
+5. Merge, then `git pull` on `main`. `post-merge` marks the card **Done**.
+   - `(CODE-nn)` or `(#417)` closes the card.
+   - **`(refs CODE-nn)` never closes it.** Use it when work remains.
 
-## Briefing subagents — keep the session cheap
-Give every subagent: one absolute snapshot path (outside any git worktree — a
-repo-relative path can't be shared across worktrees), the `.env` path instead
-of a credential-hunting task, a hard tool-call limit with "report what you
-have" if it's not enough, and a text-only report — no per-agent commit, PR, or
-findings doc. The main thread writes one combined PR at the end.
+## Briefing subagents
+Give every subagent:
+- one absolute snapshot path, outside any git worktree;
+- the `.env` path, never a credential hunt;
+- a hard tool-call limit, with "report what you have";
+- a text-only report: no commit, PR or findings doc.
+
+The main thread writes one combined PR at the end.
 <!-- EVERGREEN:END core:workflow -->
 
 <!-- EVERGREEN:START core:conventions -->
 ## Commit style (Conventional Commits)
-`type: summary (CODE-nn)` — or `(#task)` — where type ∈ feat, fix, docs,
-refactor, test, chore. Put the ref in a bracket of its own: only a bracket
-holding nothing but refs is read as a reference, so `monitor #48` in the
-summary is prose and closes nothing. `type: summary (refs CODE-nn)` references
-a card **without** finishing it. `.vikunja-code` holds this repo's code so CI
-can check scoped refs too; `vikunja.config.json` is gitignored, so CI can
-never read it.
+`type: summary (CODE-nn)`, where type is feat, fix, docs, refactor, test or
+chore.
+- Put the ref in a bracket that holds nothing but refs. A number in prose
+  (`monitor #48`) closes nothing.
+- `.vikunja-code` holds this repo's code for CI. Keep it tracked.
 
 ## Code conventions
 - **Python:** Ruff for lint + format, type hints, pytest. No bare `except`.
 - **Lua:** Luacheck-clean, StyLua-formatted; modules return a table; no globals.
-- Keep changes minimal and scoped to the task. Don't add abstractions,
-  helpers, or error handling that weren't asked for.
+- Keep changes minimal and scoped to the task. Add no abstraction, helper or
+  error handling that the task did not ask for.
 
 ## Hard rules
-- **NEVER commit secrets.** The Vikunja token lives in `VIKUNJA_TOKEN`;
-  `vikunja.config.json` and `.env` are gitignored. Don't reason from whether
-  *this* repo is public — most are private, at least one is not, and a repo's
-  visibility can be flipped in two clicks long after the commit lands. The
-  config also carries LAN addresses and board ids, which don't belong in a
-  history either way.
-- Don't bypass hooks (`--no-verify`) unless explicitly told to.
-- `main` must stay releasable — nothing merges red.
-- **Stay in your remit.** Before building any new capability, check this
-  repo's `## Remit` in README.md and the workspace project registry
-  ("Project registry — who owns what" in the workspace CLAUDE.md). If another
-  project owns that ground, don't build it here — file a card on the owning
-  project's Vikunja board
-  (`python "$env:VIKUNJA_DEVKIT\vikunja-admin.py" task create <pid> "<title>" --description "<what/why + requesting repo>"`)
-  and reference it. Never directly edit a sibling repo.
+- **NEVER commit secrets.** The Vikunja token lives in `VIKUNJA_TOKEN`.
+  `vikunja.config.json` and `.env` are gitignored. Treat every repo as public.
+- Never bypass hooks (`--no-verify`) unless explicitly told to.
+- `main` must stay releasable. Nothing merges red.
+- **Stay in your remit.** Before you build a new capability, check this repo's
+  `## Remit` in README.md and the project registry in the workspace CLAUDE.md.
+  If another project owns that ground, file a card on its board:
+  `python "$env:VIKUNJA_DEVKIT\vikunja-admin.py" task create <pid> "<title>" --description "<what/why + requesting repo>"`.
+  Never edit a sibling repo directly.
+- **Rules only in this file.** Never add a reason, a date, an owner quote or an
+  incident. Put those in `docs/`.
 
 ## Decision records (docs/decisions/)
-- Every significant design/architecture/product decision gets a numbered ADR
-  in `docs/decisions/` (copy `TEMPLATE.md`), committed with the work it
-  explains — this is the project's durable record of what was decided, when,
-  why, and what was rejected.
-- Design-review or grilling sessions that settle several decisions are
-  summarised into one ADR at the end of the session.
-- Changed your mind? New ADR that supersedes the old one — never rewrite
-  history.
+- Every significant design, architecture or product decision gets a numbered
+  ADR in `docs/decisions/` (copy `TEMPLATE.md`). Commit it with the work.
+- Summarise a design-review or grilling session into one ADR at its end.
+- Changed your mind? Write a new ADR that supersedes the old one. Never rewrite
+  an old ADR.
 <!-- EVERGREEN:END core:conventions -->
 
 ## Project-specific notes
