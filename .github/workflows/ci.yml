@@ -37,7 +37,7 @@ permissions:
 #   * `slow`-marked tests get NO Windows execution -- not locally, not in CI. Mark
 #     a test `slow` only when the thing it proves is platform-independent.
 #   * Everything NOT marked `slow` still runs on Windows at every push.
-# This job is unchanged and must stay unchanged: plain `pytest -q`, no marker
+# This job is unchanged and must stay unchanged: plain `pytest -q --durations=25`, no marker
 # filter, every test. CI is the authority.
 
 jobs:
@@ -48,7 +48,9 @@ jobs:
     # 20, not 10 (core v23): Homelab-Services' full suite reached 9 min 57 s of
     # pytest and the job was cancelled at the limit with no test failed (SVC-25).
     # The limit exists to stop a hung job, not to cap a healthy suite.
-    timeout-minutes: 20
+    # A repo raises it with the repository variable PYTHON_TIMEOUT_MINUTES
+    # (core v25); unset, it stays 20.
+    timeout-minutes: ${{ fromJSON(vars.PYTHON_TIMEOUT_MINUTES || '20') }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -152,7 +154,7 @@ jobs:
       # The stack lint rides IN pytest rather than in a CLI step of its own, and
       # that is deliberate: preflight.py is the local mirror of this file, it is a
       # shared kit tool that knows nothing about any one repo's CLI, and
-      # preflight/ci.yml drift is a bug. Both run `pytest -q`, so both run the
+      # preflight/ci.yml drift is a bug. Both run `pytest -q --durations=25`, so both run the
       # lint -- CI against Docker's real resolver, the workstation against
       # whatever stand-in the repo's conftest.py provides where Docker is absent.
       - name: Detect deployable stacks
@@ -178,7 +180,7 @@ jobs:
       - name: pytest (tolerate "no tests yet")
         shell: bash
         run: |
-          pytest -q || [ $? -eq 5 ]   # exit code 5 = no tests collected
+          pytest -q --durations=25 || [ $? -eq 5 ]   # exit code 5 = no tests collected
 
   # ---- Lua: lint + format check (Ubuntu only, keeps it simple; PR only) ----
   # Only runs when the repo actually contains Lua files.
