@@ -9,4 +9,5 @@ README.md
 docs/decisions/README.md
 docs/decisions/TEMPLATE.md
 pyproject.toml
+scripts/agentsmd.py
 scripts/docfacts.py

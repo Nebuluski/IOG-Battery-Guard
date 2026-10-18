@@ -39,12 +39,27 @@ permissions:
 #   * Everything NOT marked `slow` still runs on Windows at every push.
 # This job is unchanged and must stay unchanged: plain `pytest -q --durations=25`, no marker
 # filter, every test. CI is the authority.
+#
+# RUNNER CHOICE (core v28, GEN-71, GEN-76). Every job's `runs-on` reads the repository
+# variable CI_RUNS_ON, but ONLY when the repo is private
+# (github.event.repository.private). Unset, or a public repo = GitHub-hosted
+# `ubuntu-latest`. The value is JSON, so it holds one label or an array of labels.
+# On a PRIVATE repo, set it to run on the homelab self-hosted runner:
+#   gh variable set CI_RUNS_ON --body '["self-hosted","linux","x64"]' -R <owner>/<repo>
+# The `private` guard only stops an HONEST workflow from using the variable on a
+# public repo. It is NOT a security control: a fork PR runs its own copy of this
+# workflow file and can set `runs-on` to anything. The real controls are (1) each
+# runner on svc-ci01 is scoped to ONE repo, and (2) a repo's runner is removed
+# when the repo goes public (GEN-73). Jobs run rootless, with no sudo (GEN-76):
+# every tool installs under $HOME, never into /usr/local. The python job takes
+# Python 3.12 from uv on a self-hosted runner (core v29, GEN-79). Scratch files go
+# in $RUNNER_TEMP, never /tmp: slots are different users that share /tmp (core v30).
 
 jobs:
   # ---- Python: lint + format check + tests (Ubuntu; PR only) ----
   python:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
     # 20, not 10 (core v23): Homelab-Services' full suite reached 9 min 57 s of
     # pytest and the job was cancelled at the limit with no test failed (SVC-25).
     # The limit exists to stop a hung job, not to cap a healthy suite.
@@ -53,9 +68,23 @@ jobs:
     timeout-minutes: ${{ fromJSON(vars.PYTHON_TIMEOUT_MINUTES || '20') }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - if: runner.environment == 'github-hosted'
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      # Self-hosted svc-ci01 runs Debian 13 (core v29, GEN-79). setup-python has no
+      # Debian 13 build, and the host python3 has no ensurepip, so it cannot make a
+      # venv. uv fetches a standalone CPython 3.12 into $HOME, rootless, and the
+      # seeded venv gives the same `python` and `pip` the hosted path has.
+      - if: runner.environment != 'github-hosted'
+        uses: astral-sh/setup-uv@v6
+      - if: runner.environment != 'github-hosted'
+        name: Python 3.12 venv (self-hosted)
+        shell: bash
+        run: |
+          uv venv --clear --seed --python 3.12 "$RUNNER_TEMP/py312"
+          echo "$RUNNER_TEMP/py312/bin" >> "$GITHUB_PATH"
+          "$RUNNER_TEMP/py312/bin/python" --version
       - run: pip install ruff pytest
       # A packaged repo (a real [project] table, e.g. src/ layout with runtime
       # deps) is installed so pytest imports it with its dependencies present.
@@ -132,11 +161,13 @@ jobs:
         run: |
           set -euo pipefail
           asset="tofu_${TOFU_VERSION}_linux_amd64.tar.gz"
-          curl -sSfL --retry 3 --retry-all-errors "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/${asset}" -o "/tmp/${asset}"
-          echo "${TOFU_SHA256}  /tmp/${asset}" | sha256sum -c -
-          tar -xzf "/tmp/${asset}" -C /tmp tofu
-          sudo install -m 0755 /tmp/tofu /usr/local/bin/tofu
-          tofu version
+          curl -sSfL --retry 3 --retry-all-errors "https://github.com/opentofu/opentofu/releases/download/v${TOFU_VERSION}/${asset}" -o "$RUNNER_TEMP/${asset}"
+          echo "${TOFU_SHA256}  $RUNNER_TEMP/${asset}" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/${asset}" -C "$RUNNER_TEMP" tofu
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$RUNNER_TEMP/tofu" "$HOME/.local/bin/tofu"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/tofu" version
       # A repo that ships deployable stacks under stacks/ has those compose
       # documents linted by its own test suite, and such a lint judges the
       # document `docker compose config` RESOLVES. A lint like that must
@@ -186,7 +217,7 @@ jobs:
   # Only runs when the repo actually contains Lua files.
   lua:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -202,10 +233,46 @@ jobs:
           fi
       # DCS mission Lua targets the 5.1 sandbox — lint on the SAME runtime so
       # luacheck's std=lua51 guard reflects what DCS actually runs.
-      - if: steps.detect.outputs.has_lua == 'true'
+      # No sudo anywhere (GEN-76). GitHub-hosted runners install the packages with
+      # the runner's own passwordless apt. Self-hosted svc-ci01 slots have no sudo:
+      # Forge preinstalls the packages, and the next step FAILS if they are absent.
+      - if: steps.detect.outputs.has_lua == 'true' && runner.environment == 'github-hosted'
+        name: Install Lua 5.1 + luarocks (GitHub-hosted only)
         run: sudo apt-get update && sudo apt-get install -y lua5.1 liblua5.1-0-dev luarocks
       - if: steps.detect.outputs.has_lua == 'true'
-        run: sudo luarocks install luacheck
+        name: Require lua5.1 + luarocks (a broken host must fail, never pass silently)
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for t in lua5.1 luarocks; do
+            if ! command -v "$t" >/dev/null 2>&1; then
+              echo "::error::$t is not installed on this runner. Self-hosted hosts get it from Forge (svc-ci01); fix the host, do not skip this job."
+              missing=1
+            fi
+          done
+          exit "$missing"
+      # luarocks installs go to ~/.luarocks (--local); no root needed.
+      - if: steps.detect.outputs.has_lua == 'true'
+        name: Install luacheck + busted (user tree)
+        shell: bash
+        run: |
+          set -euo pipefail
+          luarocks install --local --lua-version 5.1 luacheck
+          luarocks install --local --lua-version 5.1 busted
+          echo "$HOME/.luarocks/bin" >> "$GITHUB_PATH"
+          paths="$(luarocks path --lua-version 5.1)"
+          if [ -z "$paths" ]; then
+            echo "::error::'luarocks path' returned nothing"
+            exit 1
+          fi
+          # `luarocks path` prints: export LUA_PATH='...'  -- turn into KEY=VALUE lines.
+          lines="$(printf '%s\n' "$paths" | sed -n "s/^export \([A-Z_]*\)='\(.*\)'$/\1=\2/p")"
+          if ! printf '%s\n' "$lines" | grep -q '^LUA_PATH='; then
+            echo "::error::'luarocks path' gave no LUA_PATH line"
+            exit 1
+          fi
+          printf '%s\n' "$lines" >> "$GITHUB_ENV"
       - if: steps.detect.outputs.has_lua == 'true'
         run: luacheck .   # hard gate: a 5.1 violation fails the build
       - if: steps.detect.outputs.has_lua == 'true'
@@ -220,8 +287,6 @@ jobs:
       # reads .busted (auto-discovers spec/*_spec.lua) and passes if there are no
       # specs yet, so this is safe for a freshly-scaffolded Lua project.
       - if: steps.detect.outputs.has_lua == 'true'
-        run: sudo luarocks install busted
-      - if: steps.detect.outputs.has_lua == 'true'
         name: Busted (offline suite on Lua 5.1)
         run: busted
 
@@ -230,7 +295,7 @@ jobs:
   # app). Mirrored locally by preflight.py — keep the two in step.
   node:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -298,7 +363,7 @@ jobs:
   # Do NOT "simplify" this back to the action, and do NOT make any step here
   # advisory (`continue-on-error`, `|| true`, `--exit-code 0`).
   gitleaks:
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -324,11 +389,13 @@ jobs:
           asset="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           curl -sSfL --retry 3 --retry-all-errors \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${asset}" \
-            -o "/tmp/${asset}"
-          echo "${GITLEAKS_SHA256}  /tmp/${asset}" | sha256sum -c -
-          tar -xzf "/tmp/${asset}" -C /tmp gitleaks
-          sudo install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks
-          gitleaks version
+            -o "$RUNNER_TEMP/${asset}"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/${asset}" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/${asset}" -C "$RUNNER_TEMP" gitleaks
+          mkdir -p "$HOME/.local/bin"
+          install -m 0755 "$RUNNER_TEMP/gitleaks" "$HOME/.local/bin/gitleaks"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/gitleaks" version
       # Same scope as before, both events:
       #   pull_request -> base.sha..head.sha (every commit the PR adds)
       #   push to main -> event.before..sha  (the merge/squash commit)
@@ -371,8 +438,8 @@ jobs:
           # Verified both ways on 8.30.1, 2026-08-17. Do not drop this flag.
           rc=0
           gitleaks git --redact --verbose --no-banner --no-color \
-            --log-opts="$range" . >/tmp/gitleaks.log 2>&1 || rc=$?
-          cat /tmp/gitleaks.log
+            --log-opts="$range" . >"$RUNNER_TEMP/gitleaks.log" 2>&1 || rc=$?
+          cat "$RUNNER_TEMP/gitleaks.log"
           if [ "$rc" -ne 0 ]; then
             echo "::error::gitleaks exited $rc -- secrets found, or the scan failed. Read the log above before assuming either."
             exit 1
@@ -382,7 +449,7 @@ jobs:
           # on 8.30.1, 2026-08-11; 8.26 exited 1). Trusting the exit code alone
           # would put a green tick over an unscanned range -- the one failure mode
           # a secret scanner must not have. Same guard as leakguard.py's.
-          if grep -Eq '(^|[[:space:]])(ERR|FTL)([[:space:]]|$)' /tmp/gitleaks.log; then
+          if grep -Eq '(^|[[:space:]])(ERR|FTL)([[:space:]]|$)' "$RUNNER_TEMP/gitleaks.log"; then
             echo "::error::gitleaks logged an ERROR -- the scan did NOT complete. Treating as FAILED, not clean."
             exit 1
           fi
@@ -391,12 +458,23 @@ jobs:
   # ---- Hard gate GitHub CAN see: every PR commit must reference a task ----
   commit-task-ref:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Every AGENTS.md is a generated copy of the CLAUDE.md beside it, for
+      # Codex (card GEN-80, core v31). This job, not the python job, so Lua and
+      # Node repos are gated too. python3 is on ubuntu-latest and svc-ci01. The
+      # script exits 0 with a note when the repo tracks no CLAUDE.md. Same case-insensitive path lookup as docfacts. Keep this in lockstep
+      # with preflight.py's mirror of it.
+      - name: AGENTS.md matches CLAUDE.md (GEN-80)
+        shell: bash
+        run: |
+          f=scripts/agentsmd.py
+          [ -f "$f" ] || f=Scripts/agentsmd.py
+          python3 "$f" --check
       - name: Require "#<id>" or this repo's "CODE-<n>" in every commit message
         shell: bash
         run: |
