@@ -25,7 +25,7 @@ id = "workspace-secret-file"
 description = "Secret config file must never be committed"
 path = '''(^|/)(vikunja\.config\.json|\.env)$'''
 
-[allowlist]
+[[allowlists]]
 description = "Workspace-wide false-positive suppressions"
 paths = [
   '''(^|/)vikunja\.config\.example\.json$''',
@@ -34,3 +34,12 @@ paths = [
 regexes = [
   '''tk_your_token_here''',
 ]
+
+# OpenSSH host-key fingerprint (SHA256: + 43 base64 chars) is a public value.
+# Narrow on purpose: only the generic-api-key rule, and the match must END in
+# the fingerprint, so a private-key block or a longer token is still flagged.
+[[allowlists]]
+description = "OpenSSH SHA256 host-key fingerprint"
+targetRules = ["generic-api-key"]
+regexTarget = "match"
+regexes = ['''SHA256:[A-Za-z0-9+/]{43}=?\s*$''']
