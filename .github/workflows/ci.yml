@@ -55,9 +55,27 @@ permissions:
 # Python 3.12 from uv on a self-hosted runner (core v29, GEN-79). Scratch files go
 # in $RUNNER_TEMP, never /tmp: slots are different users that share /tmp (core v30).
 
+# FAIL FAST (core v33, GEN-106). A PRIVATE repo with CI_RUNS_ON unset must never
+# fall back to paid GitHub runners. GitHub expressions cannot error at parse time,
+# so the `runner-guard` job does it: it runs on the same runner the repo would
+# pick (free on self-hosted; ~1 billed minute only in the misconfigured case),
+# fails with a clear message, and every other job `needs` it, so none starts.
+# Public repos stay on `ubuntu-latest` and the guard passes.
+
 jobs:
+  runner-guard:
+    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
+    timeout-minutes: 2
+    steps:
+      - if: github.event.repository.private && vars.CI_RUNS_ON == ''
+        run: |
+          echo "::error::CI_RUNS_ON unset on a private repo: set it, see GEN-106"
+          echo "gh variable set CI_RUNS_ON --body '[\"self-hosted\",\"linux\",\"x64\"]' -R <owner>/<repo>"
+          exit 1
+
   # ---- Python: lint + format check + tests (Ubuntu; PR only) ----
   python:
+    needs: runner-guard
     if: github.event_name == 'pull_request'
     runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
     # 20, not 10 (core v23): Homelab-Services' full suite reached 9 min 57 s of
@@ -78,6 +96,24 @@ jobs:
       # seeded venv gives the same `python` and `pip` the hosted path has.
       - if: runner.environment != 'github-hosted'
         uses: astral-sh/setup-uv@v6
+      # Dependency caches on the RUNNER DISK (core v33, GEN-106). Self-hosted only:
+      # a GitHub-hosted job keeps the default. Deliberately NOT actions/cache,
+      # which uploads to GitHub. setup-uv points UV_CACHE_DIR at $RUNNER_TEMP, which
+      # is wiped per job, so it is overridden here. This runs after setup-uv and
+      # BEFORE `uv venv`, so uv uses the persistent cache. $RUNNER_TOOL_CACHE
+      # persists between jobs on the same runner and is rootless. A missing dir is
+      # created (cold start). RUNNER_TOOL_CACHE is per runner slot by default
+      # (<runner>/_work/_tool), so each slot has its own cache dir.
+      - if: runner.environment != 'github-hosted'
+        name: Dependency caches on runner disk (self-hosted)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache="$RUNNER_TOOL_CACHE/../ci-cache"
+          mkdir -p "$cache/uv" "$cache/pip"
+          cache="$(cd "$cache" && pwd)"
+          echo "UV_CACHE_DIR=$cache/uv" >> "$GITHUB_ENV"
+          echo "PIP_CACHE_DIR=$cache/pip" >> "$GITHUB_ENV"
       - if: runner.environment != 'github-hosted'
         name: Python 3.12 venv (self-hosted)
         shell: bash
@@ -216,6 +252,7 @@ jobs:
   # ---- Lua: lint + format check (Ubuntu only, keeps it simple; PR only) ----
   # Only runs when the repo actually contains Lua files.
   lua:
+    needs: runner-guard
     if: github.event_name == 'pull_request'
     runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
     timeout-minutes: 15
@@ -294,6 +331,7 @@ jobs:
   # Only runs when the repo has a root package.json (e.g. an Expo/React Native
   # app). Mirrored locally by preflight.py — keep the two in step.
   node:
+    needs: runner-guard
     if: github.event_name == 'pull_request'
     runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
     timeout-minutes: 15
@@ -318,6 +356,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version-file: ${{ steps.detect.outputs.node_version_file }}
+      # npm cache on the runner disk, self-hosted only (core v33, GEN-106). Not
+      # setup-node's `cache:` input: that uses actions/cache and uploads to GitHub.
+      # setup-node keeps node itself in the persistent runner tool cache. npm's
+      # cache is safe for concurrent use. A missing dir is created.
+      - if: steps.detect.outputs.has_node == 'true' && runner.environment != 'github-hosted'
+        name: npm cache on runner disk (self-hosted)
+        shell: bash
+        run: |
+          set -euo pipefail
+          cache="$RUNNER_TOOL_CACHE/../ci-cache"
+          mkdir -p "$cache/npm"
+          echo "npm_config_cache=$(cd "$cache/npm" && pwd)" >> "$GITHUB_ENV"
       - if: steps.detect.outputs.has_node == 'true'
         name: Install dependencies
         shell: bash
@@ -363,6 +413,7 @@ jobs:
   # Do NOT "simplify" this back to the action, and do NOT make any step here
   # advisory (`continue-on-error`, `|| true`, `--exit-code 0`).
   gitleaks:
+    needs: runner-guard
     runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
@@ -457,6 +508,7 @@ jobs:
 
   # ---- Hard gate GitHub CAN see: every PR commit must reference a task ----
   commit-task-ref:
+    needs: runner-guard
     if: github.event_name == 'pull_request'
     runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
     timeout-minutes: 5
