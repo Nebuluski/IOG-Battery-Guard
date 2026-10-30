@@ -24,10 +24,10 @@ permissions:
 # the PR that introduced it, so re-running everything on the push was pure
 # duplication — the push event now runs ONLY the gitleaks secret rescan (the one
 # server-side check worth keeping on the merge commit). Windows CI was dropped
-# entirely: it was the sole 2x-billed job, and preflight.py already runs the
-# identical ruff + pytest on Windows locally (pre-push hook) on every push, so
-# Windows coverage is retained off-cloud. Keep preflight.py <-> this file in
-# lockstep: skipping the local pre-push hook now removes ALL Windows coverage.
+# entirely: it was the sole 2x-billed job. preflight.py runs the identical ruff
+# checks on Windows (pre-push hook), but by default it no longer runs the tests
+# there (PREFLIGHT_TESTS=ci, GEN-114): CI runs them. Set PREFLIGHT_TESTS=local to
+# run them on Windows. Keep preflight.py <-> this file in lockstep.
 #
 # ONE SANCTIONED DIVERGENCE (workspace ADR 0008). A repo that registers a `slow`
 # pytest marker in pyproject.toml runs `pytest -q -m "not slow"` locally, because
