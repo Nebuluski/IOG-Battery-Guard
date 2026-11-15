@@ -30,6 +30,9 @@ lua_modules/
 Thumbs.db
 .idea/
 .vscode/
+
+# --- Agent worktrees ---
+.claude/worktrees/
 # EVERGREEN:END core:ignore
 
 # EVERGREEN:START homelab:ignore
