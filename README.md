@@ -8,6 +8,8 @@ See **[docs/setup-guide.md](docs/setup-guide.md)** for the full newbie walkthrou
 - **Owns:** the Home Assistant automation that pauses GivEnergy battery
   discharge during Octopus Intelligent Go dispatch windows and restores Eco
   mode afterwards.
+- **Owns:** the HA GivEnergy power overview and inverter control card (`ha/` folder,
+  [ADR 0001](docs/decisions/0001-ha-dashboard-and-inverter-controls.md)).
 - **Does not own:** broader homelab services (Homelab-Services) or host
   provisioning (Homelab-Forge, board 20).
 - **Cross-project needs:** file a card on the owning project's Vikunja board —

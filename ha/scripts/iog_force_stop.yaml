@@ -1,0 +1,39 @@
+iog_force_stop:
+  alias: IOG force stop
+  description: 'IOG-21: cancel a running force charge or force export. Does nothing
+    if none is running.'
+  icon: mdi:stop-circle-outline
+  mode: single
+  max_exceeded: silent
+  fields:
+    dry_run:
+      name: Dry run
+      description: Log what would happen, change nothing
+      default: false
+      selector:
+        boolean: {}
+  sequence:
+  - repeat:
+      for_each:
+      - select.givtcp_sd2145g043_force_charge
+      - select.givtcp_sd2145g043_force_export
+      sequence:
+      - if:
+        - condition: template
+          value_template: '{{ states(repeat.item) not in [''Normal'',''Cancel'',''unknown'',''unavailable'']
+            }}'
+        then:
+        - if:
+          - condition: template
+            value_template: '{{ dry_run | default(false) }}'
+          then:
+          - action: logbook.log
+            data:
+              name: IOG force stop
+              message: 'dry run: would cancel {{ repeat.item }}'
+          else:
+          - action: select.select_option
+            target:
+              entity_id: '{{ repeat.item }}'
+            data:
+              option: Cancel

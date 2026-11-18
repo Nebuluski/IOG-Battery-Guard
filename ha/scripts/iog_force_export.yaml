@@ -1,0 +1,49 @@
+iog_force_export:
+  alias: IOG force export now
+  description: 'IOG-21: force export for the minutes in input_select.iog_force_duration
+    (default 30). GivTCP stops it and restores the previous mode when the time ends.
+    Does nothing if a force charge/export is already running.'
+  icon: mdi:transmission-tower-export
+  mode: single
+  max_exceeded: silent
+  fields:
+    dry_run:
+      name: Dry run
+      description: Log what would happen, change nothing
+      default: false
+      selector:
+        boolean: {}
+  sequence:
+  - variables:
+      mins: '{% set m = states(''input_select.iog_force_duration'') %}{{ m if m in
+        [''15'',''30'',''45'',''60'',''90'',''120''] else ''30'' }}'
+      busy: '{{ states(''select.givtcp_sd2145g043_force_charge'') not in [''Normal'',
+        ''Cancel''] or states(''select.givtcp_sd2145g043_force_export'') not in [''Normal'',
+        ''Cancel''] }}'
+  - if:
+    - condition: template
+      value_template: '{{ busy }}'
+    then:
+    - action: logbook.log
+      data:
+        name: IOG force export now
+        message: 'skipped: a force charge/export is already running'
+    - stop: already running
+  - if:
+    - condition: template
+      value_template: '{{ dry_run | default(false) }}'
+    then:
+    - action: logbook.log
+      data:
+        name: IOG force export now
+        message: 'dry run: would force export for {{ mins }} min'
+    - stop: dry run
+  - action: select.select_option
+    target:
+      entity_id: select.givtcp_sd2145g043_force_export
+    data:
+      option: '{{ mins }}'
+  - action: logbook.log
+    data:
+      name: IOG force export now
+      message: force export started for {{ mins }} min

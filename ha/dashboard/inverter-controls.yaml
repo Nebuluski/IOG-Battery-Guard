@@ -1,0 +1,126 @@
+# IOG-21 inverter control card (GivEnergy-app style). Built-in cards only.
+# Sits on the Home view directly under custom:givtcp-power-flow-card + custom:givtcp-battery-card.
+type: vertical-stack
+cards:
+  - type: heading
+    heading: Inverter controls
+    heading_style: title
+    icon: mdi:home-battery-outline
+  - type: markdown
+    content: >-
+      {% set g = states.automation | selectattr('entity_id', 'match', 'automation.iog_battery_guard') | list %}
+      {% if g %}**Battery guard: {{ 'active' if g[0].state == 'on' else g[0].state }}** - it overrides manual changes.
+      {% else %}Battery guard: not installed{% endif %}
+      {% set fc = states('select.givtcp_sd2145g043_force_charge') %}{% set fe = states('select.givtcp_sd2145g043_force_export') %}
+      {% if fc not in ['Normal', 'Cancel'] %}<br>**Force charge running** ({{ fc }}){% endif %}
+      {% if fe not in ['Normal', 'Cancel'] %}<br>**Force export running** ({{ fe }}){% endif %}
+  - type: tile
+    entity: select.givtcp_sd2145g043_mode
+    name: Mode
+    icon: mdi:cog-outline
+    hide_state: false
+    features_position: bottom
+    vertical: false
+    features:
+      - type: select-options
+        options:
+          - Eco
+          - Timed Demand
+          - Timed Export
+  - type: tile
+    entity: number.givtcp_sd2145g043_battery_power_reserve
+    name: Battery reserve (%)
+    icon: mdi:battery-lock
+    features_position: bottom
+    vertical: false
+    features:
+      - type: numeric-input
+        style: buttons
+  - type: tile
+    entity: input_select.iog_force_duration
+    name: Force for (minutes)
+    icon: mdi:timer-outline
+    features_position: inline
+    vertical: false
+    features:
+      - type: select-options
+  - type: horizontal-stack
+    cards:
+      - type: button
+        name: Force charge
+        icon: mdi:battery-charging-high
+        show_state: false
+        entity: script.iog_force_charge
+        tap_action:
+          action: perform-action
+          perform_action: script.iog_force_charge
+          confirmation:
+            text: Charge the battery from the grid now? It stops on its own after the minutes you picked.
+        hold_action:
+          action: none
+      - type: button
+        name: Force export
+        icon: mdi:transmission-tower-export
+        show_state: false
+        entity: script.iog_force_export
+        tap_action:
+          action: perform-action
+          perform_action: script.iog_force_export
+          confirmation:
+            text: Export battery power to the grid now? It stops on its own after the minutes you picked.
+        hold_action:
+          action: none
+      - type: button
+        name: Stop
+        icon: mdi:stop-circle-outline
+        show_state: false
+        entity: script.iog_force_stop
+        tap_action:
+          action: perform-action
+          perform_action: script.iog_force_stop
+          confirmation:
+            text: Stop the force charge or force export now?
+        hold_action:
+          action: none
+  - type: entities
+    title: Timed charge
+    show_header_toggle: false
+    state_color: true
+    entities:
+      - entity: switch.givtcp_sd2145g043_enable_charge_schedule
+        name: Timed charge on
+      - entity: time.givtcp_sd2145g043_charge_start_time_slot_1
+        name: Start
+      - entity: time.givtcp_sd2145g043_charge_end_time_slot_1
+        name: End
+      - entity: number.givtcp_sd2145g043_target_soc
+        name: Charge to (%)
+  - type: entities
+    title: Timed discharge
+    show_header_toggle: false
+    state_color: true
+    entities:
+      - entity: switch.givtcp_sd2145g043_enable_discharge_schedule
+        name: Timed discharge on
+      - entity: time.givtcp_sd2145g043_discharge_start_time_slot_1
+        name: Slot 1 start
+      - entity: time.givtcp_sd2145g043_discharge_end_time_slot_1
+        name: Slot 1 end
+      - entity: time.givtcp_sd2145g043_discharge_start_time_slot_2
+        name: Slot 2 start
+      - entity: time.givtcp_sd2145g043_discharge_end_time_slot_2
+        name: Slot 2 end
+      - type: section
+        label: Discharge stops at the battery reserve (%) above
+  - type: entities
+    title: Pause and rates
+    show_header_toggle: false
+    entities:
+      - entity: select.givtcp_sd2145g043_temp_pause_charge
+        name: Pause charging (minutes)
+      - entity: select.givtcp_sd2145g043_temp_pause_discharge
+        name: Pause discharging (minutes)
+      - entity: number.givtcp_sd2145g043_battery_charge_rate
+        name: Charge rate limit (W)
+      - entity: number.givtcp_sd2145g043_battery_discharge_rate
+        name: Discharge rate limit (W)
