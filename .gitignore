@@ -46,3 +46,4 @@ known_devices.yaml
 .cloud/
 backups/
 # EVERGREEN:END homelab:ignore
+ha/backups/
