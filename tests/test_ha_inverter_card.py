@@ -136,3 +136,29 @@ def test_main_fails_on_get_states_error(fake_main, capsys):
 def test_main_passes_when_entities_present(fake_main):
     FakeHa.states = {mod.FC: "Normal", mod.FE: "Normal"}
     assert fake_main(["--no-save"]) == 0
+
+
+def _no_ha(monkeypatch, tmp_path):
+    """Fail the test if main reads .env or builds an Ha connection."""
+
+    def boom(*a, **k):
+        raise AssertionError("main touched .env or HA before parsing flags")
+
+    monkeypatch.setattr(mod, "Ha", boom)
+    monkeypatch.setattr(mod, "read_env", boom)
+
+
+def test_main_help_exits_zero_without_ha(monkeypatch, tmp_path, capsys):
+    _no_ha(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit) as e:
+        mod.main(["--help"])
+    assert e.value.code == 0
+    assert "--no-save" in capsys.readouterr().out
+
+
+def test_main_unknown_flag_exits_two_without_ha(monkeypatch, tmp_path, capsys):
+    _no_ha(monkeypatch, tmp_path)
+    with pytest.raises(SystemExit) as e:
+        mod.main(["--bogus"])
+    assert e.value.code == 2
+    assert "--bogus" in capsys.readouterr().err

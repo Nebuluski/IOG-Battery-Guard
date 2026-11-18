@@ -1,12 +1,13 @@
 """IOG-21: push the iog_ helper + scripts to HA and put the inverter control card on Home.
 
-Usage: py -3 scripts/ha_inverter_card.py [--no-save]
+Usage: py -3 scripts/ha_inverter_card.py [--no-save] [--help]
 Reads HA_BASE_URL and HA_TOKEN from <repo root>/.env. Reads YAML from ha/.
 Never prints the token. Safe to run twice: the helper is created only if missing,
 scripts are overwritten, and the card is replaced, not stacked.
 Needs: pip install websocket-client pyyaml
 """
 
+import argparse
 import datetime
 import json
 import pathlib
@@ -120,8 +121,18 @@ class Ha:
         return self.call(m)
 
 
+def parse_args(argv):
+    """Parse flags. An unknown flag exits 2; --help exits 0. Both happen before any I/O."""
+    ap = argparse.ArgumentParser(
+        prog="ha_inverter_card.py",
+        description="Push the iog_ helper + scripts to HA and put the inverter card on Home.",
+    )
+    ap.add_argument("--no-save", action="store_true", help="skip the dashboard backup and save")
+    return ap.parse_args(argv)
+
+
 def main(argv):
-    no_save = "--no-save" in argv
+    no_save = parse_args(argv).no_save
     cfg = read_env(ENV)
     base, token = cfg.get("HA_BASE_URL", "").rstrip("/"), cfg.get("HA_TOKEN", "")
     if not base or not token:
