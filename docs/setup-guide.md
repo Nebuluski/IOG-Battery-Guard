@@ -2,10 +2,11 @@
 
 This guide takes you from your current Home Assistant (HA) to a working
 automation that **stops your GivEnergy battery discharging while Octopus
-Intelligent Go is charging cheaply**, then puts it back to normal afterwards.
+Intelligent Go is charging cheaply, or while the Zappi charges the car**, then
+puts it back to normal afterwards.
 
 Follow the parts **in order**. Don't skip Part 0 — the automation can't work
-until GivTCP is reinstalled and you've found your two entity IDs.
+until GivTCP is reinstalled and you've found your three entity IDs.
 
 **Your setup (for reference):**
 - Home Assistant: Supervised (you have the **Settings → Add-ons** store) — good.
@@ -20,13 +21,22 @@ until GivTCP is reinstalled and you've found your two entity IDs.
 - Octopus's **"intelligent dispatching"** sensor turns **on** whenever IOG is
   giving you cheap power — both the nightly 23:30–05:30 window **and** any
   daytime "smart" slots it grabs to charge the car.
-- **Sensor on**  → battery is told **"Pause Discharge"** (it stops feeding the
-  house/car from stored energy; cheap grid covers it instead).
-- **Sensor off** → battery is told **"Not Paused"** → back to normal Eco.
+- The **Zappi power** sensor shows how many watts the car charger draws.
+  Above **200 W** means "the car is charging".
+- **Dispatch on, or Zappi above 200 W** → the automation starts a GivTCP
+  **timed pause** of discharge: it picks **`60`** (minutes) on the
+  *Temp Pause Discharge* control. The control then reads **`Running`**.
+- When the 60 minutes run out, GivTCP sets the control back to **`Normal`**.
+  If the cheap slot or the car charge is still on, the automation picks `60`
+  again at once (re-arm).
+- **Dispatch off AND Zappi below 200 W** → the automation picks **`Cancel`** →
+  the pause ends and the battery is back to normal Eco.
 - Your **overnight timed charge is never touched** — pausing *discharge* doesn't
-  stop the battery *charging*.
-- It also self-corrects after an HA reboot and every 15 minutes, and does
-  nothing if the Octopus sensor is temporarily unavailable.
+  stop the battery *charging*. It never changes mode, reserve, slots, rates or
+  force charge.
+- It re-checks after an HA reboot and every 5 minutes.
+- **Fail-safe:** a sensor that is *unavailable* never starts a pause and never
+  ends one. If a pause runs out while a sensor is unavailable, it re-arms.
 
 ---
 
@@ -67,41 +77,44 @@ charge. That's the "normal" we return to. Nothing to change here — just confir
 5. **Info** tab → turn on **Start on boot** and **Watchdog** → click **Start**.
 6. **Log** tab → confirm it connects to `10.0.30.10` with no repeating errors.
 
-### Step 5 — Find your TWO entity IDs (the important bit)
+### Step 5 — Find your THREE entity IDs (the important bit)
 HA → **Developer Tools → States** (left sidebar; if hidden, enable *Advanced
 Mode* in your user profile).
 
 **(a) The Octopus dispatch sensor.** In the *Entity* filter box, type
-`intelligent_dispatching`. You'll see something like:
+`intelligent_dispatching`. You may see **several**. Newer versions of the
+Octopus Energy integration make one per IOG device (for example your car),
+like:
 
 ```
-binary_sensor.octopus_energy_A_12345678_intelligent_dispatching
+binary_sensor.octopus_energy_<octopus_device>_intelligent_dispatching
 ```
 
-Copy that **full entity ID** — yours has *your* account number, not `12345678`.
+Pick the one whose state is **`on` or `off`** — not `unavailable`. Copy the
+**full entity ID**.
 
-**(b) The GivTCP battery-pause control.** Clear the filter and type `pause`.
-Look for a **`select.`** entity, e.g.:
+**(b) The Zappi power sensor.** Clear the filter and type `zappi`. Pick the
+one that reads live charge power, for example
+`sensor.myenergi_zappi_<serial>_power_ct_internal_load`. Check its unit:
+**`W`** means keep the `200` threshold. **`kW`** means change every `200` to
+`0.2`.
+
+**(c) The GivTCP pause control.** Clear the filter and type `pause`. GivTCP
+3.6.14 has **no** untimed "battery pause mode" here. Use:
 
 ```
-select.givtcp_<your-serial>_battery_pause_mode
+select.givtcp_<your-serial>_temp_pause_discharge
 ```
 
-Click it and look at its **Attributes → `options`** — note the **exact** words
-it offers. You're looking for the one that means *stop discharging* (commonly
-**`Pause Discharge`**) and the one that means *normal* (commonly
-**`Not Paused`**). Write both down exactly, capitals and spaces included.
-
-> **No `pause` select exists?** Some Gen 1 firmware doesn't expose Battery
-> Pause. In that case use the **fallback** in the Appendix (set discharge rate
-> to 0) — everything else in this guide is identical.
+Its **Attributes → `options`** are: `Normal`, `Running`, `Cancel`, and minute
+counts `2` … `180`. The automation uses `60` (start), `Cancel` (stop) and
+reads `Normal` / `Running`.
 
 ### Step 6 — Sanity-check the control by hand
-Still in **Developer Tools → States** (or via the entity's dialog), set the
-pause select to **Pause Discharge** and watch the **GivEnergy app**: within
-~30–60 s the battery should stop discharging (0 W out) even if the house is
-drawing power. Set it back to **Not Paused** and confirm discharge resumes.
-If that works, the automation will work. ✅
+Set the pause control to **`2`** (two minutes) and watch the **GivEnergy app**:
+within ~30–60 s the battery should stop discharging (0 W out) even if the house
+is drawing power. The control reads `Running`. After two minutes it reads
+`Normal` and discharge resumes. If that works, the automation will work. ✅
 
 ---
 
@@ -109,14 +122,9 @@ If that works, the automation will work. ✅
 
 ### Step 7 — Put your real values into the YAML
 Open `automations/iog_battery_guard.yaml` (in this repo) and **replace every
-occurrence** of:
-- `binary_sensor.octopus_energy_A_12345678_intelligent_dispatching` → your **(a)**
-- `select.givtcp_SERIAL_battery_pause_mode` → your **(b)**
-- the two `option:` words (`"Pause Discharge"` / `"Not Paused"`) → the exact
-  words from Step 5, **if** yours differ.
-
-Tip: use Find-and-Replace so you don't miss one — the sensor ID appears several
-times and they must all match.
+`<octopus_device>`** with the device part of your sensor (a). If your Zappi or
+GivTCP serial differs, replace those ids too. Use Find-and-Replace so you don't
+miss one — each id appears several times.
 
 ### Step 8 — Add it to Home Assistant
 Easiest route (UI, validates as you go):
@@ -138,8 +146,8 @@ Easiest route (UI, validates as you go):
 1. **Developer Tools → YAML → Check Configuration** → expect *Configuration
    valid*.
 2. Find the automation under **Settings → Automations**, open it, **⋮ → Run**.
-   With no dispatch active it should leave the battery alone (or un-pause it) —
-   that's correct.
+   With no dispatch and no car charge it changes nothing (or cancels a running
+   pause) — that's correct.
 3. **Real test:** during the **23:30–05:30** window (sensor on), check the
    GivEnergy app shows the battery **not discharging**, and that after the
    window it resumes. Or temporarily prove the logic with the manual toggle from
@@ -160,16 +168,17 @@ repo workflow in `README.md` (card → `task-<id>` branch → task-ref commit).
 | Symptom | Likely cause / fix |
 |---|---|
 | Save fails with "entity not found" | A placeholder wasn't replaced, or a typo in the entity ID. Re-copy from Developer Tools → States. |
-| Battery still discharges during cheap slot | The dispatch sensor isn't turning `on` (check it in Dev Tools), or the option word doesn't match GivTCP's exactly (check the select's `options`). |
-| Battery never resumes | The "off" option word is wrong, or the select got stuck — set it to `Not Paused` by hand and check Traces. |
+| Battery still discharges during cheap slot | The dispatch sensor isn't turning `on` (check it in Dev Tools), or you picked an `unavailable` dispatch sensor in Step 5(a). |
+| Battery never resumes | A sensor is `unavailable` (fail-safe keeps the pause), or the control is stuck — set it to `Cancel` by hand and check Traces. |
+| Short discharge every 60 minutes during a long slot | The timed pause ran out; the re-arm follows within seconds. Normal. |
 | Works at night, not on daytime dispatches | Normal — only happens when Octopus actually grants a smart slot; the sensor will be `on` when it does. |
-| After an HA reboot it's in the wrong state | The startup + 15-min triggers fix this within 15 minutes; check the automation is **enabled**. |
+| After an HA reboot it's in the wrong state | The startup + 5-min triggers fix this within 5 minutes; check the automation is **enabled**. |
 
 ---
 
 ## Appendix — fallback if there's no Battery-Pause select
 
-If Step 5(b) found no `..._battery_pause_mode` select, control discharge via the
+If Step 5(c) found no `..._temp_pause_discharge` select, control discharge via the
 **discharge-rate number** instead. Find it in Dev Tools → States (filter
 `discharge`), e.g. `number.givtcp_<serial>_battery_discharge_rate` (watts) or a
 `..._discharge_power_limit` (%). Then in the automation, swap the two
