@@ -87,13 +87,28 @@
         # pause ended) and no pause is running now.
         - conditions:
             - condition: template
-              value_template: "{{ (need_pause or unknown_after_pause) and pause_state == 'Normal' }}"
+              value_template: "{{ (need_pause or unknown_after_pause) and pause_state in ['Normal', 'Cancel'] }}"
           sequence:
             - action: select.select_option
               target:
                 entity_id: select.givtcp_sd2145g043_temp_pause_discharge
               data:
                 option: "60"
+            - action: persistent_notification.dismiss
+              data:
+                notification_id: iog_battery_guard
+            # Stops a re-arm storm if the select reads "Normal" straight after "60"
+            - delay: "00:01:00"
+        # FAILURE VISIBLE: a pause is needed but the control cannot be used.
+        - conditions:
+            - condition: template
+              value_template: "{{ need_pause and pause_state in ['unknown', 'unavailable'] }}"
+          sequence:
+            - action: persistent_notification.create
+              data:
+                notification_id: iog_battery_guard
+                title: "IOG Battery-Guard"
+                message: "Battery guard cannot pause discharge: GivTCP pause control unavailable"
         # RELEASE: both sensors known clear and a pause is running.
         - conditions:
             - condition: template
