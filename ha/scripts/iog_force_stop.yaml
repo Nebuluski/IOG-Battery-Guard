@@ -20,20 +20,29 @@ iog_force_stop:
       sequence:
       - if:
         - condition: template
-          value_template: '{{ states(repeat.item) not in [''Normal'',''Cancel'',''unknown'',''unavailable'']
-            }}'
+          value_template: '{{ states(repeat.item) in [''unknown'',''unavailable''] }}'
         then:
+        - action: logbook.log
+          data:
+            name: IOG force stop
+            message: 'could not act on {{ repeat.item }}: GivTCP is unavailable'
+        else:
         - if:
           - condition: template
-            value_template: '{{ dry_run | default(false) }}'
+            value_template: '{{ states(repeat.item) not in [''Normal'',''Cancel''] }}'
           then:
-          - action: logbook.log
-            data:
-              name: IOG force stop
-              message: 'dry run: would cancel {{ repeat.item }}'
-          else:
-          - action: select.select_option
-            target:
-              entity_id: '{{ repeat.item }}'
-            data:
-              option: Cancel
+          - if:
+            - condition: template
+              value_template: '{{ dry_run | default(false) }}'
+            then:
+            - action: logbook.log
+              data:
+                name: IOG force stop
+                message: 'dry run: would cancel {{ repeat.item }}'
+            else:
+            - action: select.select_option
+              target:
+                entity_id: '{{ repeat.item }}'
+              data:
+                option: Cancel
+

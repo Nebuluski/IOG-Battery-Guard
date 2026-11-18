@@ -45,7 +45,11 @@ def load_yaml(rel):
 
 def insert_card(conf, card):
     """Put card under the GivTCP power overview on the default view. Replaces an old copy."""
-    view = next(v for v in conf["views"] if v.get("path") == "default_view")
+    view = next((v for v in conf.get("views") or [] if v.get("path") == "default_view"), None)
+    if view is None:
+        raise ValueError("no view with path 'default_view' in the dashboard")
+    if view.get("cards") is None:
+        raise ValueError("default_view has no 'cards' key (sections view?); refusing to edit it")
     cards = [
         c
         for c in view["cards"]
@@ -95,7 +99,10 @@ class Ha:
             return r.status
 
     def state(self, eid):
-        for s in self.call({"type": "get_states"})["result"]:
+        r = self.call({"type": "get_states"})
+        if not r.get("success"):
+            raise RuntimeError(f"get_states failed: {r.get('error')}")
+        for s in r.get("result") or []:
             if s["entity_id"] == eid:
                 return s["state"]
         return None
@@ -144,7 +151,16 @@ def main(argv):
     time.sleep(3)
 
     # 3. dry runs: no inverter change
-    before = (ha.state(FC), ha.state(FE))
+    try:
+        before = (ha.state(FC), ha.state(FE))
+    except RuntimeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if None in before:
+        print(
+            f"error: force select entity missing ({FC} / {FE}); cannot check state", file=sys.stderr
+        )
+        return 1
     for sid in SCRIPT_IDS:
         r = ha.call(
             {
@@ -157,7 +173,14 @@ def main(argv):
         print(f"dry run {sid}: success={r.get('success')} {r.get('error', '')}")
         ok = ok and bool(r.get("success"))
     time.sleep(2)
-    after = (ha.state(FC), ha.state(FE))
+    try:
+        after = (ha.state(FC), ha.state(FE))
+    except RuntimeError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    if None in after:
+        print("error: force select entity missing after dry runs", file=sys.stderr)
+        return 1
     print(f"force selects unchanged={before == after}")
     ok = ok and before == after
 
@@ -173,7 +196,11 @@ def main(argv):
         (BACKUPS / f"lovelace_default_{stamp}.json").write_text(
             json.dumps(d0, indent=1), encoding="utf-8"
         )
-        pos = insert_card(d0, card)
+        try:
+            pos = insert_card(d0, card)
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 1
         r = ha.save(None, d0)
         print(f"saved default: success={r.get('success')} card at index {pos} {r.get('error', '')}")
         ok = ok and bool(r.get("success"))
@@ -182,7 +209,11 @@ def main(argv):
             (BACKUPS / f"lovelace_lovelace_{stamp}.json").write_text(
                 json.dumps(d1, indent=1), encoding="utf-8"
             )
-            pos = insert_card(d1, card)
+            try:
+                pos = insert_card(d1, card)
+            except ValueError as e:
+                print(f"error: {e}", file=sys.stderr)
+                return 1
             r = ha.save("lovelace", d1)
             print(f"saved lovelace (separate store): success={r.get('success')} index {pos}")
             ok = ok and bool(r.get("success"))
