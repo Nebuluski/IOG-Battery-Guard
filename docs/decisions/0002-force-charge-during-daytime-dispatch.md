@@ -30,8 +30,10 @@ A second automation, `iog_offwindow_charge`, in `automations/iog_battery_guard.y
 - **Keep the force past 23:30** — rejected; the night schedule owns the window.
 
 ## Consequences
-- Ownership lives in the automation run. After an HA restart mid-dispatch, a
-  running force is not cancelled at dispatch end; GivTCP times it out.
+- Ownership and the owner stop live in two helpers
+  (`input_boolean.iog_offwindow_owned`, `input_boolean.iog_offwindow_user_stop`),
+  so an HA restart does not orphan a force. `scripts/ha_inverter_card.py`
+  creates them. `scripts/ha_push_automations.py` deploys the automations.
 - Charging can stop at the inverter charge target (92 %). That is accepted.
-- Deploy is by hand, like the guard (setup guide Part 1); no script pushes
-  automations yet.
+- Open risk: unknown whether GivTCP force end resets the discharge rate while the
+  pause select still reads Running; the guard re-arms only on select state.

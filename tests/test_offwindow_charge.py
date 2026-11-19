@@ -11,6 +11,8 @@ yaml = pytest.importorskip("yaml")
 PATH = pathlib.Path(__file__).resolve().parent.parent / "automations" / "iog_battery_guard.yaml"
 DISPATCH = "binary_sensor.octopus_energy_<octopus_device>_intelligent_dispatching"
 FC = "select.givtcp_sd2145g043_force_charge"
+OWNED = "input_boolean.iog_offwindow_owned"
+USER_STOP = "input_boolean.iog_offwindow_user_stop"
 PAUSE = "select.givtcp_sd2145g043_temp_pause_discharge"
 # Options the live GivTCP force charge select offers (read from HA, 19-11-26).
 FORCE_OPTIONS = ["Normal", "Running", "Cancel"] + [
@@ -70,7 +72,9 @@ def test_offwindow_triggers(off):
 
 
 def test_offwindow_needs_dispatch_on(off):
-    assert {"condition": "state", "entity_id": DISPATCH, "state": "on"} in off["conditions"]
+    conds = off["actions"][0]["if"]
+    assert {"condition": "state", "entity_id": DISPATCH, "state": "on"} in conds
+    assert {"condition": "state", "entity_id": USER_STOP, "state": "off"} in conds
 
 
 def test_wait_ends_on_dispatch_off_and_window_start(off):
@@ -94,10 +98,58 @@ def test_selected_options_exist_on_givtcp(off):
         assert m.strip() in FORCE_OPTIONS
 
 
-def test_cancel_only_when_owned(off):
-    final = off["actions"][-1]
-    assert final["if"][0]["value_template"].strip().startswith("{{ owned and")
-    assert final["then"][0]["data"]["option"] == "Cancel"
+def test_cancel_only_when_owned_helper_is_on(off):
+    stop = off["actions"][1]
+    assert {"condition": "state", "entity_id": OWNED, "state": "on"} in stop["if"]
+    text = json.dumps(stop["then"])
+    assert '"Cancel"' in text
+    assert "input_boolean.turn_off" in text and OWNED in text
+
+
+def test_state_lives_in_helpers_not_variables(off):
+    names = set()
+    for d in walk(off["actions"]):
+        names |= set(d.get("variables") or {})
+    assert not names & {"owned", "user_stop"}
+    text = json.dumps(off["actions"])
+    assert OWNED in text and USER_STOP in text
+
+
+def test_owner_stop_is_persisted_and_blocks_runs(off):
+    first = off["actions"][0]
+    off_cond = {"condition": "state", "entity_id": USER_STOP, "state": "off"}
+    assert off_cond in first["if"]
+    assert off_cond in first["then"][0]["repeat"]["while"]
+    sets = [
+        d
+        for d in walk(off["actions"])
+        if d.get("action") == "input_boolean.turn_on" and d["target"]["entity_id"] == USER_STOP
+    ]
+    assert sets, "owner Cancel must set the user_stop helper"
+
+
+def test_user_stop_cleared_on_dispatch_off(off):
+    last = off["actions"][-1]
+    assert {"condition": "state", "entity_id": DISPATCH, "state": "off"} in last["if"]
+    assert last["then"][0]["action"] == "input_boolean.turn_off"
+    assert last["then"][0]["target"]["entity_id"] == USER_STOP
+    assert {"trigger": "state", "entity_id": DISPATCH, "to": "off"} in off["triggers"]
+
+
+def test_ownership_set_before_force_and_failure_notified(off):
+    steps = None
+    for d in walk(off["actions"]):
+        seq = d.get("sequence")
+        if isinstance(seq, list) and any(
+            isinstance(x, dict) and x.get("action") == "select.select_option" for x in seq
+        ):
+            steps = seq
+            break
+    assert steps is not None
+    acts = [x.get("action") for x in steps]
+    assert acts.index("input_boolean.turn_on") < acts.index("select.select_option")
+    assert steps[acts.index("select.select_option")]["continue_on_error"] is True
+    assert "persistent_notification.create" in json.dumps(steps)
 
 
 # ---- render the real templates with Jinja2 -------------------------------------------
@@ -139,7 +191,7 @@ def test_mins_rounds_up_to_an_option(off, end_min, want):
 def test_window_check(off, hhmm, outside):
     h, m = map(int, hhmm.split(":"))
     now = NOW.replace(hour=h, minute=m)
-    cond = off["conditions"][1]["value_template"]
-    loop = off["actions"][1]["repeat"]["while"][0]["value_template"]
+    cond = off["actions"][0]["if"][1]["value_template"]
+    loop = off["actions"][0]["then"][0]["repeat"]["while"][1]["value_template"]
     assert render(cond, now=now) == str(outside)
     assert render(loop, now=now) == str(outside)

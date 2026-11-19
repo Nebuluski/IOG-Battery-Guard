@@ -141,23 +141,19 @@ GivTCP serial differs, replace those ids too. Use Find-and-Replace so you don't
 miss one — each id appears several times.
 
 ### Step 8 — Add it to Home Assistant
-Easiest route (UI, validates as you go):
-1. HA → **Settings → Automations & Scenes → + Create Automation → Skip / Start
-   with an empty automation**.
-2. Top-right **⋮ → Edit in YAML**.
-3. Delete what's there and **paste the contents of your edited
-   `iog_battery_guard.yaml`** — but paste **from the `- alias:` line down**
-   (don't paste the `#` comment header; it's just notes). The pasted block must
-   start at `- alias:`.
-   The file holds **two** automations. Paste each one into its own new
-   automation: the guard first, then **IOG Off-window charge** (its own
-   `- alias:` line down to the end of the file).
-4. **Save**. If HA complains, it'll point at the line — usually a leftover
-   placeholder or a mismatched option word.
+Use the deploy scripts (they read `HA_BASE_URL` and `HA_TOKEN` from `.env`):
+1. `py -3 scripts/ha_inverter_card.py --no-save` — creates the two helpers the
+   off-window automation needs (`input_boolean.iog_offwindow_owned` and
+   `input_boolean.iog_offwindow_user_stop`).
+2. `py -3 scripts/ha_push_automations.py --octopus-device <your device id> --dry-run`
+   — prints the two automation ids. Nothing is sent.
+3. Run the same command without `--dry-run`. It pushes both automations and
+   reloads them. A non-zero exit code means an HTTP error.
+4. If HA complains, check the entity ids from Step 7.
 
-> Prefer files? If your `configuration.yaml` has `automation: !include
-> automations.yaml`, paste the same block into `automations.yaml` instead, then
-> **Developer Tools → YAML → Check Configuration**, then **Reload Automations**.
+> By hand instead? **Settings → Automations & Scenes → + Create Automation →
+> Edit in YAML**, paste each automation from its `- alias:` line down, and
+> create the two helpers under **Settings → Devices & services → Helpers**.
 
 ### Step 9 — First test
 1. **Developer Tools → YAML → Check Configuration** → expect *Configuration
