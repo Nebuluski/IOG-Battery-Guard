@@ -38,6 +38,20 @@ until GivTCP is reinstalled and you've found your three entity IDs.
 - **Fail-safe:** a sensor that is *unavailable* never starts a pause and never
   ends one. If a pause runs out while a sensor is unavailable, it re-arms.
 
+### The second automation: off-window charge (IOG-23)
+- A dispatch **outside 23:30–05:30** (a daytime car charge) → it starts a GivTCP
+  **timed force charge** on *Force Charge*, so the battery charges at the cheap
+  rate too. The time is the minutes left in the dispatch, rounded up to the next
+  option (2 … 180). With no end time it uses 30.
+- If the force runs out and the dispatch is still on, it starts it again.
+- **Dispatch off, or 23:30** → it cancels the force, but only a force it started.
+  A force you start from the card is never cancelled.
+- Press **Force stop** during the dispatch and it leaves the force alone until
+  the next dispatch.
+- It never touches the discharge pause. The guard above still wins.
+- The battery stops at its charge target (92 %) or when full. That is correct.
+- Decision: [ADR 0002](decisions/0002-force-charge-during-daytime-dispatch.md).
+
 ---
 
 ## Part 0 — Prerequisites
@@ -135,6 +149,9 @@ Easiest route (UI, validates as you go):
    `iog_battery_guard.yaml`** — but paste **from the `- alias:` line down**
    (don't paste the `#` comment header; it's just notes). The pasted block must
    start at `- alias:`.
+   The file holds **two** automations. Paste each one into its own new
+   automation: the guard first, then **IOG Off-window charge** (its own
+   `- alias:` line down to the end of the file).
 4. **Save**. If HA complains, it'll point at the line — usually a leftover
    placeholder or a mismatched option word.
 

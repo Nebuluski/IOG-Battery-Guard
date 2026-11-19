@@ -121,3 +121,137 @@
                 entity_id: select.givtcp_sd2145g043_temp_pause_discharge
               data:
                 option: "Cancel"
+
+# =============================================================================
+# IOG Off-window charge - force charge the battery during a daytime IOG dispatch
+# =============================================================================
+# WHAT IT DOES (IOG-23, ADR 0002)
+#   When an IOG dispatch runs OUTSIDE the 23:30-05:30 cheap window, it starts a
+#   GivTCP timed force charge (select.givtcp_sd2145g043_force_charge) so the
+#   battery fills at the cheap rate too. When the dispatch ends, or 23:30 comes,
+#   it cancels the force - but ONLY a force that this run started.
+#   - Length: minutes to the dispatch current_end, rounded UP to the next force
+#     option (2 ... 180). No current_end -> 30. Longer than 180 -> re-armed when
+#     GivTCP times the force out.
+#   - A force the owner started from the card is never cancelled or replaced.
+#   - The owner presses Force stop (select reads "Cancel") -> it stops managing
+#     the force for the rest of this dispatch.
+#   - It never touches the discharge pause. The battery guard above still wins.
+#   - Battery full or charge target reached: GivTCP stops charging by itself.
+# -----------------------------------------------------------------------------
+
+- alias: "IOG Off-window charge - force charge during a daytime IOG dispatch"
+  id: iog_offwindow_charge
+  description: >-
+    Force charge the GivEnergy battery (GivTCP timed force, re-armed) while an
+    Octopus Intelligent Go dispatch runs outside 23:30-05:30; cancel the force
+    this automation started when the dispatch ends or the cheap window starts.
+  mode: single
+  max_exceeded: silent
+
+  triggers:
+    - trigger: state
+      entity_id: binary_sensor.octopus_energy_<octopus_device>_intelligent_dispatching
+      to: "on"
+    - trigger: time
+      at: "05:30:00"
+    - trigger: homeassistant
+      event: start
+    - trigger: time_pattern
+      minutes: "/5"
+
+  conditions:
+    - condition: state
+      entity_id: binary_sensor.octopus_energy_<octopus_device>_intelligent_dispatching
+      state: "on"
+    - condition: template
+      value_template: >-
+        {%- set m = now().hour * 60 + now().minute -%}{{ not (m >= 1410 or m < 330) }}
+
+  actions:
+    - variables:
+        owned: false
+        user_stop: false
+    - repeat:
+        while:
+          - condition: template
+            value_template: >-
+              {%- set m = now().hour * 60 + now().minute -%}
+              {{ is_state('binary_sensor.octopus_energy_<octopus_device>_intelligent_dispatching', 'on')
+                 and not (m >= 1410 or m < 330) and not user_stop }}
+        sequence:
+          - choose:
+              # START / RE-ARM: no force runs now.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states('select.givtcp_sd2145g043_force_charge') in ['Normal', 'Cancel'] }}"
+                sequence:
+                  - variables:
+                      mins: >-
+                        {%- set e = as_timestamp(state_attr('binary_sensor.octopus_energy_<octopus_device>_intelligent_dispatching', 'current_end'), none) -%}
+                        {%- set left = ((e - as_timestamp(now())) / 60) | round(0, 'ceil') | int if e is not none else 30 -%}
+                        {%- set fit = [2, 5, 10, 15, 30, 45, 60, 75, 90, 105, 120, 135, 150, 165, 180] | select('>=', left) | list -%}
+                        {{ (fit | first if fit else 180) | string }}
+                  - action: select.select_option
+                    target:
+                      entity_id: select.givtcp_sd2145g043_force_charge
+                    data:
+                      option: "{{ mins }}"
+                  - variables:
+                      owned: true
+                  - action: persistent_notification.dismiss
+                    data:
+                      notification_id: iog_offwindow_charge
+                  - action: logbook.log
+                    data:
+                      name: IOG Off-window charge
+                      message: "force charge started for {{ mins }} min (daytime dispatch)"
+                  # Stops a re-arm storm if the select reads "Normal" straight after
+                  - delay: "00:01:00"
+              # FAILURE VISIBLE: the force control cannot be used.
+              - conditions:
+                  - condition: template
+                    value_template: "{{ states('select.givtcp_sd2145g043_force_charge') in ['unknown', 'unavailable'] }}"
+                sequence:
+                  - action: persistent_notification.create
+                    data:
+                      notification_id: iog_offwindow_charge
+                      title: "IOG Off-window charge"
+                      message: "Cannot force charge during the dispatch: GivTCP force charge control unavailable"
+          - wait_for_trigger:
+              - trigger: state
+                entity_id: binary_sensor.octopus_energy_<octopus_device>_intelligent_dispatching
+                to: "off"
+              - trigger: state
+                entity_id: select.givtcp_sd2145g043_force_charge
+                to: "Normal"
+              - trigger: state
+                entity_id: select.givtcp_sd2145g043_force_charge
+                to: "Cancel"
+                id: force_cancelled
+              - trigger: time
+                at: "23:30:00"
+            timeout: "00:05:00"
+            continue_on_timeout: true
+          # The owner pressed Force stop on our force: leave it alone now.
+          - variables:
+              user_stop: >-
+                {{ owned and wait.trigger is not none and wait.trigger.id == 'force_cancelled' }}
+              owned: >-
+                {{ owned and states('select.givtcp_sd2145g043_force_charge') not in ['Normal', 'Cancel'] }}
+    # STOP: dispatch ended or the cheap window started; cancel only our own force.
+    - if:
+        - condition: template
+          value_template: >-
+            {{ owned and states('select.givtcp_sd2145g043_force_charge') not in
+               ['Normal', 'Cancel', 'unknown', 'unavailable'] }}
+      then:
+        - action: select.select_option
+          target:
+            entity_id: select.givtcp_sd2145g043_force_charge
+          data:
+            option: "Cancel"
+        - action: logbook.log
+          data:
+            name: IOG Off-window charge
+            message: "force charge cancelled (dispatch ended or cheap window started)"
