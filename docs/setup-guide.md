@@ -38,6 +38,20 @@ until GivTCP is reinstalled and you've found your three entity IDs.
 - **Fail-safe:** a sensor that is *unavailable* never starts a pause and never
   ends one. If a pause runs out while a sensor is unavailable, it re-arms.
 
+### The second automation: off-window charge (IOG-23)
+- A dispatch **outside 23:30–05:30** (a daytime car charge) → it starts a GivTCP
+  **timed force charge** on *Force Charge*, so the battery charges at the cheap
+  rate too. The time is the minutes left in the dispatch, rounded up to the next
+  option (2 … 180). With no end time it uses 30.
+- If the force runs out and the dispatch is still on, it starts it again.
+- **Dispatch off, or 23:30** → it cancels the force, but only a force it started.
+  A force you start from the card is never cancelled.
+- Press **Force stop** during the dispatch and it leaves the force alone until
+  the next dispatch.
+- It never touches the discharge pause. The guard above still wins.
+- The battery stops at its charge target (92 %) or when full. That is correct.
+- Decision: [ADR 0002](decisions/0002-force-charge-during-daytime-dispatch.md).
+
 ---
 
 ## Part 0 — Prerequisites
@@ -127,20 +141,19 @@ GivTCP serial differs, replace those ids too. Use Find-and-Replace so you don't
 miss one — each id appears several times.
 
 ### Step 8 — Add it to Home Assistant
-Easiest route (UI, validates as you go):
-1. HA → **Settings → Automations & Scenes → + Create Automation → Skip / Start
-   with an empty automation**.
-2. Top-right **⋮ → Edit in YAML**.
-3. Delete what's there and **paste the contents of your edited
-   `iog_battery_guard.yaml`** — but paste **from the `- alias:` line down**
-   (don't paste the `#` comment header; it's just notes). The pasted block must
-   start at `- alias:`.
-4. **Save**. If HA complains, it'll point at the line — usually a leftover
-   placeholder or a mismatched option word.
+Use the deploy scripts (they read `HA_BASE_URL` and `HA_TOKEN` from `.env`):
+1. `py -3 scripts/ha_inverter_card.py --no-save` — creates the two helpers the
+   off-window automation needs (`input_boolean.iog_offwindow_owned` and
+   `input_boolean.iog_offwindow_user_stop`).
+2. `py -3 scripts/ha_push_automations.py --octopus-device <your device id> --dry-run`
+   — prints the two automation ids. Nothing is sent.
+3. Run the same command without `--dry-run`. It pushes both automations and
+   reloads them. A non-zero exit code means an HTTP error.
+4. If HA complains, check the entity ids from Step 7.
 
-> Prefer files? If your `configuration.yaml` has `automation: !include
-> automations.yaml`, paste the same block into `automations.yaml` instead, then
-> **Developer Tools → YAML → Check Configuration**, then **Reload Automations**.
+> By hand instead? **Settings → Automations & Scenes → + Create Automation →
+> Edit in YAML**, paste each automation from its `- alias:` line down, and
+> create the two helpers under **Settings → Devices & services → Helpers**.
 
 ### Step 9 — First test
 1. **Developer Tools → YAML → Check Configuration** → expect *Configuration

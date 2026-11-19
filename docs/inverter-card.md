@@ -7,7 +7,10 @@ Decision: [ADR 0001](decisions/0001-ha-dashboard-and-inverter-controls.md).
 - **Charge / discharge slots** — set the slot times.
 - **Force charge / Force export** — ask first, then run for the minutes in
   `input_select.iog_force_duration` (default 30). GivTCP stops it and restores
-  the old mode. A second force does nothing while one runs.
+  the old mode. A second force does nothing while one runs. During a daytime
+  IOG dispatch the off-window charge automation may run its own force
+  ([ADR 0002](decisions/0002-force-charge-during-daytime-dispatch.md)); the
+  card then shows "Force charge running".
 - **Force stop** — cancels a running force.
 - **Pause and rate limits** — pause the battery, set charge/discharge rate.
 

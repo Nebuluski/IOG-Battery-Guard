@@ -2,6 +2,8 @@
 
 Home Assistant automation that pauses GivEnergy battery discharge while Octopus
 Intelligent Go is dispatching cheap power, then restores normal Eco when it ends.
+A second automation force charges the battery during a daytime dispatch
+([ADR 0002](docs/decisions/0002-force-charge-during-daytime-dispatch.md)).
 See **[docs/setup-guide.md](docs/setup-guide.md)** for the full newbie walkthrough.
 
 ## Remit

@@ -22,6 +22,7 @@ HA_DIR = ROOT / "ha"
 ENV = ROOT / ".env"
 BACKUPS = ROOT / "ha" / "backups"
 MARK = "Inverter controls"
+BOOL_HELPERS = ("iog_offwindow_owned", "iog_offwindow_user_stop")
 SCRIPT_IDS = ("iog_force_charge", "iog_force_export", "iog_force_stop")
 P = "givtcp_sd2145g043"
 FC, FE = f"select.{P}_force_charge", f"select.{P}_force_export"
@@ -151,6 +152,21 @@ def main(argv):
     else:
         r = ha.call({"type": "input_select/create", **helper})
         print("helper: created" if r.get("success") else f"helper: FAILED {r.get('error')}")
+        ok = ok and bool(r.get("success"))
+
+    # 1b. input_booleans the off-window automation (IOG-23) keeps its state in
+    booleans = ha.call({"type": "input_boolean/list"}).get("result") or []
+    for bid in BOOL_HELPERS:
+        bh = load_yaml(f"helpers/input_boolean_{bid}.yaml")[bid]
+        if any(h.get("id") == bid or h.get("name") == bh["name"] for h in booleans):
+            print(f"helper {bid}: exists (left as is)")
+            continue
+        r = ha.call({"type": "input_boolean/create", **bh})
+        print(
+            f"helper {bid}: created"
+            if r.get("success")
+            else f"helper {bid}: FAILED {r.get('error')}"
+        )
         ok = ok and bool(r.get("success"))
 
     # 2. scripts (overwritten)
