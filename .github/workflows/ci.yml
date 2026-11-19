@@ -42,10 +42,10 @@ permissions:
 #
 # RUNNER CHOICE (core v28, GEN-71, GEN-76). Every job's `runs-on` reads the repository
 # variable CI_RUNS_ON, but ONLY when the repo is private
-# (github.event.repository.private). Unset, or a public repo = GitHub-hosted
-# `ubuntu-latest`. The value is JSON, so it holds one label or an array of labels.
-# On a PRIVATE repo, set it to run on the homelab self-hosted runner:
-#   gh variable set CI_RUNS_ON --body '["self-hosted","linux","x64"]' -R <owner>/<repo>
+# (github.event.repository.private). Unset on a private repo = self-hosted svc-ci01
+# (GEN-151). A public repo = GitHub-hosted `ubuntu-latest`. The value is JSON, so
+# it holds one label or an array of labels. For a timed hosted window use:
+#   dev-workflow/ci-hosted-window.ps1 -Repo <repo> -Hours 2
 # The `private` guard only stops an HONEST workflow from using the variable on a
 # public repo. It is NOT a security control: a fork PR runs its own copy of this
 # workflow file and can set `runs-on` to anything. The real controls are (1) each
@@ -55,29 +55,41 @@ permissions:
 # Python 3.12 from uv on a self-hosted runner (core v29, GEN-79). Scratch files go
 # in $RUNNER_TEMP, never /tmp: slots are different users that share /tmp (core v30).
 
-# FAIL FAST (core v33, GEN-106). A PRIVATE repo with CI_RUNS_ON unset must never
-# fall back to paid GitHub runners. GitHub expressions cannot error at parse time,
-# so the `runner-guard` job does it: it runs on the same runner the repo would
-# pick (free on self-hosted; ~1 billed minute only in the misconfigured case),
-# fails with a clear message, and every other job `needs` it, so none starts.
-# Public repos stay on `ubuntu-latest` and the guard passes.
+# DEFAULT RUNNER (core v35, GEN-151). A PRIVATE repo runs on the self-hosted
+# svc-ci01 runner: ["self-hosted","linux","x64"]. There is NO silent fallback to a
+# GitHub-hosted runner. The repo variable CI_RUNS_ON overrides the default. The
+# owner opens a timed hosted window with dev-workflow/ci-hosted-window.ps1: it sets
+# CI_RUNS_ON to ["ubuntu-latest"] for 1-4 hours and the trigger closes it.
+# A PUBLIC repo stays on `ubuntu-latest` (free).
+# FAIL FAST (core v33, GEN-106; v35). A malformed CI_RUNS_ON on a private repo must
+# not start any job. The `runner-guard` job checks the value, fails with a clear
+# message, and every other job `needs` it. An unset variable is valid (default).
+# A `schedule` trigger has no `repository` in its event, so a private repo would run hosted: never add `schedule` without a private fallback.
 
 jobs:
   runner-guard:
-    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.repository.private && (vars.CI_RUNS_ON || '["self-hosted","linux","x64"]') || '"ubuntu-latest"') }}
     timeout-minutes: 2
     steps:
-      - if: github.event.repository.private && vars.CI_RUNS_ON == ''
+      - if: github.event.repository.private && vars.CI_RUNS_ON != ''
+        env:
+          CI_RUNS_ON_VALUE: ${{ vars.CI_RUNS_ON }}
         run: |
-          echo "::error::CI_RUNS_ON unset on a private repo: set it, see GEN-106"
-          echo "gh variable set CI_RUNS_ON --body '[\"self-hosted\",\"linux\",\"x64\"]' -R <owner>/<repo>"
-          exit 1
+          python3 - <<'PY' || { echo "::error::CI_RUNS_ON is not a JSON label or non-empty list of labels (GEN-151)"; exit 1; }
+          import json, os, sys
+          v = json.loads(os.environ["CI_RUNS_ON_VALUE"])
+          ok = isinstance(v, str) and v.strip() or (
+              isinstance(v, list) and v and all(isinstance(x, str) and x.strip() for x in v)
+          )
+          sys.exit(0 if ok else 1)
+          PY
+      - run: echo "runner ok"
 
   # ---- Python: lint + format check + tests (Ubuntu; PR only) ----
   python:
     needs: runner-guard
     if: github.event_name == 'pull_request'
-    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.repository.private && (vars.CI_RUNS_ON || '["self-hosted","linux","x64"]') || '"ubuntu-latest"') }}
     # 20, not 10 (core v23): Homelab-Services' full suite reached 9 min 57 s of
     # pytest and the job was cancelled at the limit with no test failed (SVC-25).
     # The limit exists to stop a hung job, not to cap a healthy suite.
@@ -254,7 +266,7 @@ jobs:
   lua:
     needs: runner-guard
     if: github.event_name == 'pull_request'
-    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.repository.private && (vars.CI_RUNS_ON || '["self-hosted","linux","x64"]') || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -333,7 +345,7 @@ jobs:
   node:
     needs: runner-guard
     if: github.event_name == 'pull_request'
-    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.repository.private && (vars.CI_RUNS_ON || '["self-hosted","linux","x64"]') || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -414,7 +426,7 @@ jobs:
   # advisory (`continue-on-error`, `|| true`, `--exit-code 0`).
   gitleaks:
     needs: runner-guard
-    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.repository.private && (vars.CI_RUNS_ON || '["self-hosted","linux","x64"]') || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -510,7 +522,7 @@ jobs:
   commit-task-ref:
     needs: runner-guard
     if: github.event_name == 'pull_request'
-    runs-on: ${{ fromJSON((github.event.repository.private && vars.CI_RUNS_ON) || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(github.event.repository.private && (vars.CI_RUNS_ON || '["self-hosted","linux","x64"]') || '"ubuntu-latest"') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
