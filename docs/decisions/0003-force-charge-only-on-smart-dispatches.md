@@ -24,8 +24,13 @@ This supersedes the trigger rule of ADR 0002. The rest of ADR 0002 stands.
 - **Block only `boost`** — rejected; an unknown source would still charge.
 
 ## Consequences
-- Live check 21-11-26: `planned_dispatches` was empty. Entries in
-  `completed_dispatches` all read source `unknown`. The exact string for a real
-  smart dispatch is not seen yet; the match is `smart`. If Octopus uses another
-  word, no force starts (safe side). Check the next live dispatch.
-- A dispatch absent from `planned_dispatches` while it runs gets no force.
+- Live check 20-11-26 and 21-11-26: `planned_dispatches` entries read source
+  `SMART`. The live dispatch stayed in `planned_dispatches` while it ran.
+  `completed_dispatches` entries read `unknown`, so the gate reads planned, not
+  completed. The match is case-insensitive.
+- A dispatch with no planned entry gets no force (safe side, by owner rule).
+- Accepted: after an HA restart during a force, attributes may load late. The
+  gate then fails and STOP cancels the force. The next 5-minute trigger restarts
+  it. This is cost-safe.
+- The force loop re-checks the SMART gate on each pass. A SMART dispatch that
+  runs into a boost stops the re-arm, and the STOP logic ends the force.

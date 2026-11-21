@@ -202,7 +202,8 @@
           state: "off"
         # IOG-24, ADR 0003: only a SMART dispatch may start a force. The current
         # dispatch is the planned entry with start <= now < end; none = no force.
-        - condition: template
+        - &iog_smart_gate
+          condition: template
           value_template: >-
             {%- set t = as_timestamp(now()) -%}
             {%- set ns = namespace(smart=false) -%}
@@ -226,6 +227,8 @@
               - condition: state
                 entity_id: input_boolean.iog_offwindow_user_stop
                 state: "off"
+              # Same SMART gate each pass (YAML alias): a boost stops the re-arm.
+              - *iog_smart_gate
             sequence:
               - choose:
                   # START / RE-ARM: no force runs now.
