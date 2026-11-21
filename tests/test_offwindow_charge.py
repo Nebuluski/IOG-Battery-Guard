@@ -195,3 +195,66 @@ def test_window_check(off, hhmm, outside):
     loop = off["actions"][0]["then"][0]["repeat"]["while"][1]["value_template"]
     assert render(cond, now=now) == str(outside)
     assert render(loop, now=now) == str(outside)
+
+
+# ---- IOG-24: force only for a SMART dispatch ------------------------------------------
+
+
+def render_smart(tpl, planned, now=NOW):
+    jinja2 = pytest.importorskip("jinja2")
+    env = jinja2.Environment()
+    env.globals.update(
+        now=lambda: now,
+        as_timestamp=lambda v, default=None: (
+            v.timestamp()
+            if isinstance(v, datetime.datetime)
+            else datetime.datetime.fromisoformat(v).timestamp()
+            if v
+            else default
+        ),
+        state_attr=lambda e, a: planned if a == "planned_dispatches" else None,
+    )
+    return env.from_string(tpl).render().strip()
+
+
+def smart_template(off):
+    conds = off["actions"][0]["if"]
+    found = [c for c in conds if "planned_dispatches" in c.get("value_template", "")]
+    assert len(found) == 1, "start path must hold one source check"
+    return found[0]["value_template"]
+
+
+def entry(source, start_min=-10, end_min=20):
+    return {
+        "source": source,
+        "start": (NOW + datetime.timedelta(minutes=start_min)).isoformat(),
+        "end": (NOW + datetime.timedelta(minutes=end_min)).isoformat(),
+        "charge_in_kwh": -1.0,
+    }
+
+
+@pytest.mark.parametrize(
+    "planned,want",
+    [
+        ([entry("smart")], "True"),
+        ([entry("Smart")], "True"),
+        ([entry("boost")], "False"),
+        ([entry("unknown")], "False"),
+        ([entry(None)], "False"),
+        ([], "False"),
+        (None, "False"),
+        ([entry("smart", 10, 40)], "False"),  # future entry, not current
+        ([entry("smart", -40, -10)], "False"),  # past entry
+        ([entry("boost"), entry("smart")], "True"),
+        ([entry("smart", 10, 40), entry("boost")], "False"),
+    ],
+)
+def test_force_only_for_smart_current_dispatch(off, planned, want):
+    assert render_smart(smart_template(off), planned) == want
+
+
+def test_smart_gate_is_on_start_path_only(off):
+    first = off["actions"][0]
+    assert any("planned_dispatches" in c.get("value_template", "") for c in first["if"])
+    # stop and ownership logic stay ungated so a running force still ends
+    assert "planned_dispatches" not in json.dumps(off["actions"][1:])
