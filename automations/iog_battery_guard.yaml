@@ -160,6 +160,8 @@
 #     (ha_inverter_card.py creates them.)
 #   - It never touches the discharge pause. The battery guard above still wins.
 #   - Battery full or charge target reached: GivTCP stops charging by itself.
+#   - IOG-24, ADR 0003: it starts a force ONLY when the current planned dispatch
+#     has source "smart". A boost/bump/unknown source never starts a force.
 # -----------------------------------------------------------------------------
 
 - alias: "IOG Off-window charge - force charge during a daytime IOG dispatch"
@@ -198,6 +200,21 @@
         - condition: state
           entity_id: input_boolean.iog_offwindow_user_stop
           state: "off"
+        # IOG-24, ADR 0003: only a SMART dispatch may start a force. The current
+        # dispatch is the planned entry with start <= now < end; none = no force.
+        - &iog_smart_gate
+          condition: template
+          value_template: >-
+            {%- set t = as_timestamp(now()) -%}
+            {%- set ns = namespace(smart=false) -%}
+            {%- for d in state_attr('binary_sensor.octopus_energy_<octopus_device>_intelligent_dispatching', 'planned_dispatches') or [] -%}
+            {%- if as_timestamp(d['start'], none) is not none and as_timestamp(d['end'], none) is not none
+                   and as_timestamp(d['start']) <= t < as_timestamp(d['end'])
+                   and (d['source'] | string | lower) == 'smart' -%}
+            {%- set ns.smart = true -%}
+            {%- endif -%}
+            {%- endfor -%}
+            {{ ns.smart }}
       then:
         - repeat:
             while:
@@ -210,6 +227,8 @@
               - condition: state
                 entity_id: input_boolean.iog_offwindow_user_stop
                 state: "off"
+              # Same SMART gate each pass (YAML alias): a boost stops the re-arm.
+              - *iog_smart_gate
             sequence:
               - choose:
                   # START / RE-ARM: no force runs now.
